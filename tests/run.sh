@@ -310,7 +310,42 @@ else
   fail=$((fail + 1)); failed_names+=("python parse"); echo "  FAIL build: the python helpers parse ($pybad)"
 fi
 
-# 18. The self-update finds a newer release and reports the version.
+# 18. Talking to Orca: the agents are pointed at orca-box, and back again.
+setup_env
+mkdir -p "$WORK/orca-data" "$WORK/orca-sock"
+chmod 700 "$WORK/orca-sock"
+python3 "$MOCKS/orca-daemon.py" "$WORK/orca-data" "$WORK/orca-sock/orca.sock" \
+  > "$WORK/orca.log" 2>&1 &
+daemon_pid=$!
+# Wait for the daemon to bind its socket.
+for _ in $(seq 1 50); do
+  [ -S "$WORK/orca-sock/orca.sock" ] && break
+  sleep 0.1
+done
+
+export EXTRA_ENV="ORCA_USER_DATA_PATH=$WORK/orca-data"
+run orca-box-configure-orca
+assert_out "orca-set" "orca: the agents are pointed at orca-box" \
+  "claude  command: (default) -> orca-box claude" \
+  "codex   command: codex --yolo -> orca-box codex" \
+  "pi      command: (default) -> orca-box pi"
+
+# The commands that were there before are remembered, so --unset can put
+# them back.
+run orca-box-configure-orca --unset
+assert_out "orca-unset" "orca: --unset restores the previous commands" \
+  "codex   command: orca-box codex -> codex --yolo"
+
+# With Orca not running, the tool says so and exits 3.
+kill "$daemon_pid" 2>/dev/null
+wait "$daemon_pid" 2>/dev/null
+rm -f "$WORK/orca-data/orca-runtime.json"
+run orca-box-configure-orca
+assert_out "orca-not-running" "orca: a missing Orca is reported clearly" \
+  "Orca isn't running"
+unset EXTRA_ENV
+
+# 19. The self-update finds a newer release and reports the version.
 setup_env
 run orca-box-setup --no-orca-app --no-build --no-orca --no-launch
 mkdir -p "$WORK/fixtures"
