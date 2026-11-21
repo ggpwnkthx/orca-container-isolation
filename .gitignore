@@ -1,0 +1,7 @@
+# Build output that is committed on purpose: orca.sh is what people download.
+# (Listed here so an editor's "ignore generated files" setting does not
+#  hide it from the diff.)
+
+# Test scratch
+tests/fixtures/
+*.log

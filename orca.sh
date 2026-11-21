@@ -6,16 +6,19 @@
 # permission prompts without reaching the rest of your machine. Installs the
 # Orca app too, with an application-menu entry.
 #
-# Recommended public-Gist usage (download, review, then run):
-#   curl -fsSLO https://gist.githubusercontent.com/ggpwnkthx/f760bea3b776734133a2508bd6d21619/raw/orca.sh
+# This file is generated from src/ by build.sh -- edit the sources there, not
+# here. See README.md for the layout and for how to contribute.
+#
+# Recommended usage (download, review, then run):
+#   curl -fsSLO https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca.sh
 #   less orca.sh
 #   bash orca.sh --git=rw --yolo
 #
 # One-liner (pipe directly to bash):
-#   curl -fsSL https://gist.githubusercontent.com/ggpwnkthx/f760bea3b776734133a2508bd6d21619/raw/orca.sh | bash
+#   curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca.sh | bash
 #
 # One-liner with options (everything after "--" goes to the script):
-#   curl -fsSL https://gist.githubusercontent.com/ggpwnkthx/f760bea3b776734133a2508bd6d21619/raw/orca.sh | bash -s -- --git=rw --yolo
+#   curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca.sh | bash -s -- --git=rw --yolo
 #
 # Options (all optional; full list with: bash orca.sh --help):
 #   --git=rw   let agents stage and commit (default: read-only .git)
@@ -24,7 +27,6 @@
 #
 # Run as your normal user, not with sudo. Keep Orca open, or let the installer
 # start it: Orca has to be running for its agent settings to change.
-# The URL above always serves the gist's latest revision.
 #
 # Installing copies this file to ~/.local/share/orca-box/orca.sh and links
 # these commands in ~/.local/bin to it; each acts on the name it's called by:
@@ -34,7 +36,7 @@
 #   orca-box-archive [--all]   remove boxes now instead of waiting for idle
 #   orca-box-configure-orca    point Orca's agents at orca-box (or --unset)
 #   orca-box-install-orca      install/update the Orca app + menu entry
-#   orca-box-update            update orca-box from the gist (--check,
+#   orca-box-update            update orca-box from the repository (--check,
 #                              --agents, --orca, --restart, --enable-auto)
 #   orca-box-setup             this installer (--update, --uninstall, ...)
 # Before installing, the same tools are reachable as: bash orca.sh TOOL ...
@@ -47,14 +49,20 @@ set -euo pipefail
 
 # Where this script came from. Piped in (curl ... | bash) there is no file, so
 # the installer fetches the copy it keeps from ORCA_BOX_SOURCE_URL instead.
-ORCA_BOX_SOURCE_URL="${ORCA_BOX_SOURCE_URL:-https://gist.githubusercontent.com/ggpwnkthx/f760bea3b776734133a2508bd6d21619/raw/orca.sh}"
+#
+# That is the latest release, not the main branch: a tagged release is what
+# users get, so a broken main can never reach them.
+ORCA_BOX_SOURCE_URL="${ORCA_BOX_SOURCE_URL:-https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca.sh}"
+# The version of this script. build.sh stamps it in from the VERSION file.
+# Read out of the file by orca-box-update, not from this variable.
+# shellcheck disable=SC2034
+ORCA_BOX_VERSION="1.0.0"
 ORCA_BOX_SELF=""
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
   ORCA_BOX_SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 fi
 ORCA_BOX_BIN="${PREFIX:-$HOME/.local}/bin"
-ORCA_BOX_TOOLS=(orca-box orca-box-archive orca-box-login orca-box-configure-orca orca-box-install-orca orca-box-update)
-
+ORCA_BOX_TOOLS=(orca-box orca-box-archive orca-box-login orca-box-configure-orca orca-box-install-orca orca-box-update orca-box-setup)
 # ============================================================ shared library
 ORCA_BOX_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/orca-box"
 ORCA_BOX_SETTINGS_KEYS=(ORCA_BOX_GIT ORCA_BOX_IDLE_SECONDS ORCA_BOX_MEMORY ORCA_BOX_IMAGE ORCA_BOX_HOME_VOLUME ORCA_BOX_SKILLS ORCA_BOX_GH_AUTH)
@@ -86,12 +94,36 @@ ob_load_config
 ORCA_BOX_IMAGE="${ORCA_BOX_IMAGE:-localhost/orca-agents:latest}"
 ORCA_BOX_HOME_VOLUME="${ORCA_BOX_HOME_VOLUME:-orca-agent-home}"
 
+# --- output -------------------------------------------------------------
+# say/warn/die are shared by every command. ob_quiet silences say(); it is
+# set by orca-box-update --quiet only.
+ob_quiet=0
+say()  { [ "$ob_quiet" = 1 ] || printf '\033[1m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[33mwarning:\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# --- downloads ----------------------------------------------------------
+# TLS only, with retries and a connect timeout, for every fetch.
+CURL_FLAGS=(--proto '=https' --tlsv1.2 --retry 3 --connect-timeout 20)
+
+# Download URL to FILE, quietly.
+ob_fetch() { curl -fsSL "${CURL_FLAGS[@]}" -o "$2" "$1"; }
+
+# Download URL to FILE, showing progress (for the big files).
+ob_download() { curl -fL "${CURL_FLAGS[@]}" -H 'User-Agent: orca-box-installer' -o "$2" "$1"; }
+
+# True if FILE is a valid orca.sh: used before trusting any download.
+ob_is_orca_script() { grep -q '^# orca.sh — Orca + orca-box in one file' "$1" && bash -n "$1"; }
+
+# True if the Docker daemon is running rootless.
+ob_docker_rootless() { docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q rootless; }
+
 # Print the engine mode: podman, docker or docker-rootless.
 ob_detect_mode() {
   if command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
     echo podman
   elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q rootless; then
+    if ob_docker_rootless; then
       echo docker-rootless
     else
       echo docker
@@ -129,9 +161,7 @@ ob_init() {
         case "$saved" in
           docker*) OB_MODE="$saved" ;;
           *) OB_MODE=docker
-             if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q rootless; then
-               OB_MODE=docker-rootless
-             fi ;;
+             if ob_docker_rootless; then OB_MODE=docker-rootless; fi ;;
         esac ;;
       *) echo "orca-box: ORCA_BOX_ENGINE must be podman or docker" >&2; return 1 ;;
     esac
@@ -301,6 +331,173 @@ done
 EOF
 }
 
+# ============================================================ box internals
+# The helpers cmd_box is built from. They set shell variables (wt, common,
+# skill_mounts, gh_mounts, ...) that cmd_box then uses.
+
+# Which folder to give the box:
+#   git repo/worktree        -> that worktree (+ .git per ORCA_BOX_GIT)
+#   other folder under ~     -> that folder only (Orca folder workspaces)
+#   ~ itself, a ~/.dotdir, or anywhere outside ~ -> nothing: a throwaway box
+#     with no host files, enough for Orca's background checks
+box_resolve_worktree() {
+  here="$(pwd -P)"
+  home_real="$(cd "$HOME" && pwd -P)"
+  common=""
+  if wt="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    common="$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir)"
+  else
+    case "$here/" in
+      "$home_real/" | "$home_real"/.*) wt="" ;;
+      "$home_real"/?*) wt="$here" ;;
+      *) wt="" ;;
+    esac
+  fi
+}
+
+# Skills installed on the host (npx skills, or by hand) go into the box
+# read-only: everything in ~/.agents/skills, ~/.claude/skills, ~/.codex/skills
+# and ~/.pi/agent/skills. Each of those folders is mounted whole, at the path
+# it has on the host, so the box sees what the host has right now: a skill
+# installed while the box runs shows up in it, no restart needed. The box
+# links every host skill into the folder its agent reads (as a symlink, so
+# the skills already in the box's own home volume stay visible), and drops
+# the link when the skill goes away on the host. Read-only, so an agent
+# can't plant code in a skill that every other box would then run. Links
+# (npx skills links each agent's folder to its shared store, ~/.agents/skills)
+# keep working: they are mounted where they are, so they resolve inside the
+# box as they do outside it.
+# ORCA_BOX_SKILLS=0 turns this off.
+box_skill_mounts() {
+  skill_mounts=() skill_sync=""
+  [ "${ORCA_BOX_SKILLS:-1}" != 0 ] || return 0
+  local sro d src parent entry skill real
+  sro="$(ob_mount_opt ro)"
+  for d in "${ORCA_BOX_SKILL_DIRS[@]}"; do
+    src="$HOME/$d"
+    if [ ! -d "$src" ]; then
+      # The mount has to exist when the box starts: make the folder on the
+      # host if its parent is there, so skills installed later still arrive.
+      parent="${d%/*}"
+      if [ "$parent" = "$d" ]; then parent="."; fi
+      [ -d "$HOME/$parent" ] || continue
+      mkdir -p "$src" 2>/dev/null || continue
+    fi
+    skill_mounts+=(-v "$src:$src$sro")
+    # A skill kept outside those folders (a link out of the shared store):
+    # mount it where it belongs. Rare, and fixed when the box starts.
+    for entry in "$src"/*; do
+      skill="${entry##*/}"
+      case "$skill" in *:* | *,* | .*) continue ;; esac  # can't be expressed in -v
+      real="$(readlink -f "$entry" 2>/dev/null)" || continue
+      [ -d "$real" ] || continue  # skills are folders; skip stray files, broken links
+      case "$real" in "$HOME"/*/skills/*) continue ;; esac  # already mounted
+      skill_mounts+=(-v "$real:/home/node/$d/$skill$sro")
+    done
+  done
+  skill_sync="$(ob_skill_sync_script)"
+}
+
+# Your gh credentials, so agents can use the host's gh login (opt-in:
+# ORCA_BOX_GH_AUTH=1). The config folder is mounted read-only: an agent
+# cannot add or change credentials, but it can read the token in there, so
+# this hands your GitHub token to everyone who runs in the box.
+box_gh_mounts() {
+  gh_mounts=() gh_env=()
+  [ "${ORCA_BOX_GH_AUTH:-0}" = 1 ] || return 0
+  local gh_dir v
+  gh_dir="${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}"
+  if [ -d "$gh_dir" ]; then
+    gh_mounts+=(-v "$gh_dir:/home/node/.config/gh$(ob_mount_opt ro)")
+  fi
+  # A token in the environment instead of in gh's config folder.
+  for v in GH_TOKEN GITHUB_TOKEN; do
+    if [ -n "${!v:-}" ]; then gh_env+=(-e "$v"); fi
+  done
+}
+
+# The .git mounts for the box, and the git environment that goes with them.
+# Agents may stage and commit (ORCA_BOX_GIT=rw): objects, refs, logs and
+# this worktree's own index/HEAD are writable. Read-only: everything git
+# could later be made to *execute* on the host, or that belongs to other
+# worktrees:
+#   hooks/, config (core.hooksPath, core.fsmonitor, filter drivers,
+#   aliases), info/ (attributes, grafts), refs/tags, other worktrees'
+#   folders, and this worktree's config.worktree when the repo uses them.
+box_git_mounts() {
+  git_mounts=() git_env=()
+  local rw ro p k v K gitdir
+  rw="$(ob_mount_opt rw)" ro="$(ob_mount_opt ro)"
+  if [ -z "$common" ]; then
+    :  # not a git repo: just the folder
+  elif [ "$GIT_MODE" = rw ]; then
+    gitdir="$(git -C "$wt" rev-parse --path-format=absolute --git-dir)"
+    git_mounts+=(-v "$common:$common$rw")
+    for p in hooks config info refs/tags; do
+      if [ -e "$common/$p" ]; then git_mounts+=(-v "$common/$p:$common/$p$ro"); fi
+    done
+    if [ -d "$common/worktrees" ]; then
+      git_mounts+=(-v "$common/worktrees:$common/worktrees$ro")
+      if [ "$gitdir" != "$common" ]; then
+        git_mounts+=(-v "$gitdir:$gitdir$rw")
+        if [ "$(git -C "$wt" config --bool extensions.worktreeConfig 2>/dev/null)" = true ]; then
+          if [ ! -e "$gitdir/config.worktree" ]; then : > "$gitdir/config.worktree"; fi
+          git_mounts+=(-v "$gitdir/config.worktree:$gitdir/config.worktree$ro")
+        fi
+      fi
+    fi
+    # Commit as you: your global ~/.gitconfig isn't in the box.
+    for k in name email; do
+      v="$(git -C "$wt" config "user.$k" 2>/dev/null || true)"
+      if [ -n "$v" ]; then
+        K="$(printf '%s' "$k" | tr '[:lower:]' '[:upper:]')"
+        git_env+=(-e "GIT_AUTHOR_$K=$v" -e "GIT_COMMITTER_$K=$v")
+      fi
+    done
+    # No automatic gc/maintenance: it would try to rewrite read-only parts.
+    git_env+=(-e GIT_CONFIG_COUNT=2
+              -e GIT_CONFIG_KEY_0=gc.auto -e GIT_CONFIG_VALUE_0=0
+              -e GIT_CONFIG_KEY_1=maintenance.auto -e GIT_CONFIG_VALUE_1=false)
+  else
+    git_mounts+=(-v "$common:$common$ro")
+  fi
+}
+
+# "true 2 <git mode>" for a running, current box; anything else needs
+# (re)creating.
+box_state() {
+  ob inspect -f '{{.State.Running}} {{index .Config.Labels "orca.box"}} {{index .Config.Labels "orca.git"}}' \
+    "$name" 2>/dev/null || true
+}
+
+# Only one launch may create the box: Orca often starts several agent
+# processes for one workspace at once. Sets state and need_create.
+box_lock() {
+  state="$(box_state)"
+  case "$state" in
+    "true 2 "*) return 0 ;;  # running: just use it, no lock needed
+  esac
+  exec 9>"$lockfile"
+  if flock -w "$lock_timeout" 9; then
+    state="$(box_state)"  # another launch may have made it while we waited
+    case "$state" in
+      "true 2 "*) ;;
+      *) [ -z "$state" ] || ob rm -f "$name" >/dev/null 2>&1 || true
+         state="" need_create=1 ;;
+    esac
+  else
+    exec 9>&-
+    state="$(box_state)"
+    case "$state" in
+      "true 2 "*) ;;  # the other launch finished; use its box
+      *)
+        echo "orca-box: timed out after ${lock_timeout}s waiting for another launch in this workspace." >&2
+        echo "orca-box: what holds the lock: ls -l /proc/[0-9]*/fd 2>/dev/null | grep -F '$lockfile'" >&2
+        exit 1 ;;
+    esac
+  fi
+}
+
 # ============================================================ orca-box
 usage_box() {
   cat <<'USAGE'
@@ -359,6 +556,7 @@ while :; do
   [ "$idle" -ge "$limit" ] && exit 0
 done'
 
+case "${1:-}" in -h|--help) usage_box; exit 0 ;; esac
 [ "$#" -gt 0 ] || { echo "usage: orca-box <agent> [args...]" >&2; exit 2; }
 ob_init
 
@@ -385,90 +583,20 @@ for id in $(ob ps -aq --filter label=orca.worktree 2>/dev/null); do
   fi
 done
 
-# Which folder to give the box:
-#   git repo/worktree        -> that worktree (+ .git per ORCA_BOX_GIT)
-#   other folder under ~     -> that folder only (Orca folder workspaces)
-#   ~ itself, a ~/.dotdir, or anywhere outside ~ -> nothing: a throwaway box
-#     with no host files, enough for Orca's background checks
-here="$(pwd -P)"
-home_real="$(cd "$HOME" && pwd -P)"
-common=""
-if wt="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-  common="$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir)"
-else
-  case "$here/" in
-    "$home_real/" | "$home_real"/.*) wt="" ;;
-    "$home_real"/?*) wt="$here" ;;
-    *) wt="" ;;
-  esac
-fi
-
 ob_user_args
+box_resolve_worktree
+box_skill_mounts
+box_gh_mounts
 
-# Skills installed on the host (npx skills, or by hand) go into the box
-# read-only: everything in ~/.agents/skills, ~/.claude/skills, ~/.codex/skills
-# and ~/.pi/agent/skills. Each of those folders is mounted whole, at the path
-# it has on the host, so the box sees what the host has right now: a skill
-# installed while the box runs shows up in it, no restart needed. The box
-# links every host skill into the folder its agent reads (as a symlink, so
-# the skills already in the box's own home volume stay visible), and drops
-# the link when the skill goes away on the host. Read-only, so an agent
-# can't plant code in a skill that every other box would then run. Links
-# (npx skills links each agent's folder to its shared store, ~/.agents/skills)
-# keep working: they are mounted where they are, so they resolve inside the
-# box as they do outside it.
-# ORCA_BOX_SKILLS=0 turns this off.
-skill_mounts=() skill_sync=""
-if [ "${ORCA_BOX_SKILLS:-1}" != 0 ]; then
-  sro="$(ob_mount_opt ro)"
-  for d in "${ORCA_BOX_SKILL_DIRS[@]}"; do
-    src="$HOME/$d"
-    if [ ! -d "$src" ]; then
-      # The mount has to exist when the box starts: make the folder on the
-      # host if its parent is there, so skills installed later still arrive.
-      parent="${d%/*}"
-      if [ "$parent" = "$d" ]; then parent="."; fi
-      [ -d "$HOME/$parent" ] || continue
-      mkdir -p "$src" 2>/dev/null || continue
-    fi
-    skill_mounts+=(-v "$src:$src$sro")
-    # A skill kept outside those folders (a link out of the shared store):
-    # mount it where it belongs. Rare, and fixed when the box starts.
-    for entry in "$src"/*; do
-      skill="${entry##*/}"
-      case "$skill" in *:* | *,* | .*) continue ;; esac  # can't be expressed in -v
-      real="$(readlink -f "$entry" 2>/dev/null)" || continue
-      [ -d "$real" ] || continue  # skills are folders; skip stray files, broken links
-      case "$real" in "$HOME"/*/skills/*) continue ;; esac  # already mounted
-      skill_mounts+=(-v "$real:/home/node/$d/$skill$sro")
-    done
-  done
-  skill_sync="$(ob_skill_sync_script)"
-fi
-
-# Your gh credentials, so agents can use the host's gh login (opt-in:
-# ORCA_BOX_GH_AUTH=1). The config folder is mounted read-only: an agent
-# cannot add or change credentials, but it can read the token in there, so
-# this hands your GitHub token to everyone who runs in the box.
-gh_mounts=() gh_env=()
-if [ "${ORCA_BOX_GH_AUTH:-0}" = 1 ]; then
-  gh_dir="${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}"
-  if [ -d "$gh_dir" ]; then
-    gh_mounts+=(-v "$gh_dir:/home/node/.config/gh$(ob_mount_opt ro)")
-  fi
-  # A token in the environment instead of in gh's config folder.
-  for v in GH_TOKEN GITHUB_TOKEN; do
-    if [ -n "${!v:-}" ]; then gh_env+=(-e "$v"); fi
-  done
-fi
+# Options every box gets: the agent's user, no capabilities, and the shared
+# home volume.
+box_common=("${OB_USER_ARGS[@]}" --cap-drop=all --security-opt no-new-privileges
+  "${limits[@]}" -v "$ORCA_BOX_HOME_VOLUME:/home/node" -e HOME=/home/node)
 
 if [ -z "$wt" ]; then
   ob_prepare_home
   exec "$ENGINE" run --rm "${io[@]}" --label orca.scratch=1 \
-    "${OB_USER_ARGS[@]}" \
-    --cap-drop=all --security-opt no-new-privileges \
-    "${limits[@]}" \
-    -v "$ORCA_BOX_HOME_VOLUME:/home/node" -e HOME=/home/node -w /home/node \
+    "${box_common[@]}" -w /home/node \
     "${skill_mounts[@]}" "${gh_mounts[@]}" "${gh_env[@]}" \
     "$ORCA_BOX_IMAGE" bash -c 'bash -c "$1" _ "$2" >/dev/null 2>&1; shift 2; exec "$@"' \
       _ "$skill_sync" "$HOME" "$@"
@@ -489,92 +617,22 @@ if [ -L "$lockdir" ] || [ ! -d "$lockdir" ] || [ ! -O "$lockdir" ]; then
   echo "orca-box: lock folder $lockdir isn't a private folder of yours" >&2
   exit 1
 fi
-# "true 2 <git mode>" for a running, current box; anything else needs (re)creating.
-box_state() {
-  ob inspect -f '{{.State.Running}} {{index .Config.Labels "orca.box"}} {{index .Config.Labels "orca.git"}}' \
-    "$name" 2>/dev/null || true
-}
 lock_timeout="${ORCA_BOX_LOCK_TIMEOUT:-60}"
 lockfile="$lockdir/$name.lock"
 need_create=0
-state="$(box_state)"
-case "$state" in
-  "true 2 "*) ;;  # running: just use it, no lock needed
-  *)
-    exec 9>"$lockfile"
-    if flock -w "$lock_timeout" 9; then
-      state="$(box_state)"  # another launch may have made it while we waited
-      case "$state" in
-        "true 2 "*) ;;
-        *) [ -z "$state" ] || ob rm -f "$name" >/dev/null 2>&1 || true
-           state="" need_create=1 ;;
-      esac
-    else
-      exec 9>&-
-      state="$(box_state)"
-      case "$state" in
-        "true 2 "*) ;;  # the other launch finished; use its box
-        *)
-          echo "orca-box: timed out after ${lock_timeout}s waiting for another launch in this workspace." >&2
-          echo "orca-box: what holds the lock: ls -l /proc/[0-9]*/fd 2>/dev/null | grep -F '$lockfile'" >&2
-          exit 1 ;;
-      esac
-    fi ;;
-esac
+box_lock
 
 # The whole creation step runs with fd 9 hidden from child processes (bash
 # keeps a close-on-exec copy, so we still hold the lock): nothing started
 # here (podman's conmon, git's fsmonitor daemon...) may keep it.
 if [ "$need_create" = 1 ]; then {
-  rw="$(ob_mount_opt rw)" ro="$(ob_mount_opt ro)"
-  mounts=(-v "$wt:$wt$rw")
-  git_env=()
-  if [ -z "$common" ]; then
-    :  # not a git repo: just the folder
-  elif [ "$GIT_MODE" = rw ]; then
-    # Agents may stage and commit, so objects, refs, logs and this worktree's
-    # own index/HEAD are writable. Read-only: everything git could later be
-    # made to *execute* on the host, or that belongs to other worktrees:
-    #   hooks/, config (core.hooksPath, core.fsmonitor, filter drivers,
-    #   aliases), info/ (attributes, grafts), refs/tags, other worktrees'
-    #   folders, and this worktree's config.worktree when the repo uses them.
-    gitdir="$(git -C "$wt" rev-parse --path-format=absolute --git-dir)"
-    mounts+=(-v "$common:$common$rw")
-    for p in hooks config info refs/tags; do
-      [ -e "$common/$p" ] && mounts+=(-v "$common/$p:$common/$p$ro")
-    done
-    if [ -d "$common/worktrees" ]; then
-      mounts+=(-v "$common/worktrees:$common/worktrees$ro")
-      if [ "$gitdir" != "$common" ]; then
-        mounts+=(-v "$gitdir:$gitdir$rw")
-        if [ "$(git -C "$wt" config --bool extensions.worktreeConfig 2>/dev/null)" = true ]; then
-          [ -e "$gitdir/config.worktree" ] || : > "$gitdir/config.worktree"
-          mounts+=(-v "$gitdir/config.worktree:$gitdir/config.worktree$ro")
-        fi
-      fi
-    fi
-    # Commit as you: your global ~/.gitconfig isn't in the box.
-    for k in name email; do
-      v="$(git -C "$wt" config "user.$k" 2>/dev/null || true)"
-      [ -n "$v" ] || continue
-      K="$(printf '%s' "$k" | tr '[:lower:]' '[:upper:]')"
-      git_env+=(-e "GIT_AUTHOR_$K=$v" -e "GIT_COMMITTER_$K=$v")
-    done
-    # No automatic gc/maintenance: it would try to rewrite read-only parts.
-    git_env+=(-e GIT_CONFIG_COUNT=2
-              -e GIT_CONFIG_KEY_0=gc.auto -e GIT_CONFIG_VALUE_0=0
-              -e GIT_CONFIG_KEY_1=maintenance.auto -e GIT_CONFIG_VALUE_1=false)
-  else
-    mounts+=(-v "$common:$common$ro")
-  fi
-
+  mounts=(-v "$wt:$wt$(ob_mount_opt rw)")
+  box_git_mounts
+  mounts+=("${git_mounts[@]}")
   ob_prepare_home
   ob run -d --rm --name "$name" \
     --label "orca.worktree=$wt" --label orca.box=2 --label "orca.git=$GIT_MODE" \
-    "${OB_USER_ARGS[@]}" \
-    --cap-drop=all --security-opt no-new-privileges \
-    "${limits[@]}" \
-    -v "$ORCA_BOX_HOME_VOLUME:/home/node" -e HOME=/home/node \
+    "${box_common[@]}" \
     "${skill_mounts[@]}" "${gh_mounts[@]}" "${gh_env[@]}" "${mounts[@]}" -w "$wt" \
     -e IDLE_SECONDS="$IDLE_SECONDS" "${git_env[@]}" \
     "$ORCA_BOX_IMAGE" bash -c "$WATCHDOG" _ "$skill_sync" "$HOME" >/dev/null
@@ -616,6 +674,7 @@ USAGE
 }
 
 cmd_archive() {
+case "${1:-}" in -h|--help) usage_archive; exit 0 ;; esac
 set +e
 ob_init || exit 1
 
@@ -656,6 +715,7 @@ USAGE
 }
 
 cmd_login() {
+case "${1:-}" in -h|--help) usage_login; exit 0 ;; esac
 ob_init
 ob_user_args
 ob_prepare_home
@@ -900,10 +960,6 @@ DESKTOP_ID="orca-ide"
 DESKTOP_FILE="$APPS/$DESKTOP_ID.desktop"
 GITHUB_API="${ORCA_BOX_GITHUB_API:-https://api.github.com}"
 
-say()  { printf '\033[1m==>\033[0m %s\n' "$*"; }
-warn() { printf '\033[33mwarning:\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
-
 action=install from=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -954,11 +1010,6 @@ mkdir -p "$DIR"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-dl() {  # dl URL FILE
-  curl -fL --proto '=https' --tlsv1.2 --retry 3 --connect-timeout 20 \
-    -H 'User-Agent: orca-box-installer' -o "$2" "$1"
-}
-
 version=""
 if [ -n "$from" ]; then
   [ -f "$from" ] || die "no such file: $from"
@@ -966,7 +1017,7 @@ if [ -n "$from" ]; then
   say "Installing $from"
 else
   say "Looking up the latest Orca release"
-  dl "$GITHUB_API/repos/$REPO/releases/latest" "$work/release.json" 2>/dev/null ||
+  ob_download "$GITHUB_API/repos/$REPO/releases/latest" "$work/release.json" 2>/dev/null ||
     die "couldn't reach GitHub's API. Download Orca from https://orca.dev and run: orca-box-install-orca --from FILE"
   # tag, AppImage URL, its sha256 (may be empty), latest-linux.yml URL (may be empty)
   mapfile -t info < <(python3 -I - "$work/release.json" "$asset" "$yml" <<'PY'
@@ -992,12 +1043,12 @@ PY
 
   if [ -z "${skip_download:-}" ]; then
     say "Downloading Orca $version ($asset)"
-    dl "$url" "$work/new.AppImage"
+    ob_download "$url" "$work/new.AppImage"
     if [ -n "$sha256" ]; then
       [ "$(sha256sum "$work/new.AppImage" | cut -d' ' -f1)" = "$sha256" ] ||
         die "SHA-256 of the download doesn't match GitHub's digest; not installing"
       say "Verified SHA-256 against GitHub's digest"
-    elif [ -n "$yml_url" ] && dl "$yml_url" "$work/latest.yml" 2>/dev/null; then
+    elif [ -n "$yml_url" ] && ob_download "$yml_url" "$work/latest.yml" 2>/dev/null; then
       python3 -I - "$work/latest.yml" "$asset" "$work/new.AppImage" <<'PY' ||
 import base64, hashlib, sys
 lines = open(sys.argv[1]).read().splitlines()
@@ -1148,13 +1199,14 @@ USAGE
 
 cmd_update() {
 local check=0 agents=0 orca=0 restart=0 quiet=0 auto=""
+local ob_quiet=0   # --quiet silences say() for this command only
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --check) check=1 ;;
     --agents) agents=1 ;;
     --orca) orca=1 ;;
     --restart) restart=1 ;;
-    --quiet) quiet=1 ;;
+    --quiet) quiet=1; ob_quiet=1 ;;
     --enable-auto) auto=on ;;
     --disable-auto) auto=off ;;
     -h|--help) usage_update; exit 0 ;;
@@ -1162,9 +1214,6 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
-
-say()  { [ "$quiet" = 1 ] || printf '\033[1m==>\033[0m %s\n' "$*"; }
-die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 local data="${XDG_DATA_HOME:-$HOME/.local/share}/orca-box"
 local installed="$data/orca.sh"
@@ -1218,24 +1267,24 @@ mkdir -p "$data"
 ORCA_BOX_UPDATE_TMP="$(mktemp "$data/.update.XXXXXX")"
 trap 'rm -f "${ORCA_BOX_UPDATE_TMP:-}"' EXIT
 local tmp="$ORCA_BOX_UPDATE_TMP"
-curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$tmp" "$ORCA_BOX_SOURCE_URL" ||
-  die "couldn't download $ORCA_BOX_SOURCE_URL"
-if ! grep -q '^# orca.sh — Orca + orca-box in one file' "$tmp" || ! bash -n "$tmp"; then
+ob_fetch "$ORCA_BOX_SOURCE_URL" "$tmp" || die "couldn't download $ORCA_BOX_SOURCE_URL"
+if ! ob_is_orca_script "$tmp"; then
   die "the download isn't a valid orca.sh; not updating"
 fi
 
 local old="(not installed)" new changed=1
-new="$(sha256sum "$tmp" | cut -c1-12)"
+# The version the download carries, and the one we are running.
+new="$(grep -m1 '^ORCA_BOX_VERSION=' "$tmp" | cut -d'"' -f2)"
+[ -n "$new" ] || new="(unknown version)"
 if [ -f "$installed" ]; then
-  old="$(sha256sum "$installed" | cut -c1-12)"
+  old="$(grep -m1 '^ORCA_BOX_VERSION=' "$installed" | cut -d'"' -f2)"
+  [ -n "$old" ] || old="(unknown version)"
   cmp -s "$tmp" "$installed" && changed=0
 fi
 
 if [ "$check" = 1 ]; then
   if [ "$changed" = 1 ]; then
-    local lines
-    lines="$(diff "$installed" "$tmp" 2>/dev/null | grep -c '^[<>]' || true)"
-    echo "Update available: $old -> $new (${lines:-?} lines differ). Run: orca-box-update"
+    echo "Update available: $old -> $new. Run: orca-box-update"
   else
     echo "orca-box is up to date ($old)."
   fi
@@ -1337,11 +1386,6 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-say()  { printf '\033[1m==>\033[0m %s\n' "$*"; }
-warn() { printf '\033[33mwarning:\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
-
-
 # Print "PID APPIMAGE" for a running Orca (APPIMAGE may be empty), or nothing.
 orca_running() {
   python3 -I - "$ORCA_USER_DATA" <<'PY' 2>/dev/null || true
@@ -1389,7 +1433,7 @@ if [ "$mode" = uninstall ]; then
     echo "    The Orca app stays installed at $ORCA_APP (use --uninstall --purge to remove it)."
   fi
   say "Removing scripts from $BIN and settings"
-  for s in "${ORCA_BOX_TOOLS[@]}" orca-box-setup orca-box-lib.sh; do rm -f "$BIN/$s"; done
+  for s in "${ORCA_BOX_TOOLS[@]}" orca-box-lib.sh; do rm -f "$BIN/$s"; done
   rm -rf "$DATA" "$ORCA_BOX_CONFIG_DIR"
   ( cmd_update --disable-auto --quiet ) || true
   say "Done. If you added orca-box custom agents or an Archive Script in Orca, remove them."
@@ -1448,9 +1492,7 @@ else
   # Piped in (curl ... | bash): keep a copy from the same URL.
   say "Saving a copy of orca.sh from $ORCA_BOX_SOURCE_URL"
   tmp="$(mktemp "$DATA/.orca.sh.XXXXXX")"
-  if ! curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$tmp" "$ORCA_BOX_SOURCE_URL" ||
-     ! grep -q '^# orca.sh — Orca + orca-box in one file' "$tmp" ||
-     ! bash -n "$tmp"; then
+  if ! ob_fetch "$ORCA_BOX_SOURCE_URL" "$tmp" || ! ob_is_orca_script "$tmp"; then
     rm -f "$tmp"
     die "couldn't download a copy of orca.sh to keep. Download it (curl -fsSLO $ORCA_BOX_SOURCE_URL) and run: bash orca.sh"
   fi
@@ -1458,7 +1500,7 @@ else
   mv -f "$tmp" "$DATA/orca.sh"
 fi
 rm -f "$BIN/orca-box-lib.sh"   # left over from the multi-file version
-for s in "${ORCA_BOX_TOOLS[@]}" orca-box-setup; do ln -sfn "$DATA/orca.sh" "$BIN/$s"; done
+for s in "${ORCA_BOX_TOOLS[@]}"; do ln -sfn "$DATA/orca.sh" "$BIN/$s"; done
 ob_containerfile > "$DATA/Containerfile"
 echo "$OB_MODE" > "$ORCA_BOX_CONFIG_DIR/engine"
 if [ -n "$git_mode" ]; then
@@ -1582,31 +1624,33 @@ EOF
 }
 
 # ============================================================ dispatch
+# The tool list is the single source of truth: the same names are linked
+# into ~/.local/bin, and each one is dispatched to the command below.
+ob_is_tool() {
+  local t
+  for t in "${ORCA_BOX_TOOLS[@]}"; do
+    [ "$t" = "$1" ] && return 0
+  done
+  return 1
+}
+
 main() {
-  local name="${0##*/}"
-  case "$name" in
-    orca-box|orca-box-archive|orca-box-login|orca-box-configure-orca|orca-box-install-orca|orca-box-update|orca-box-setup) ;;
-    *)  # run as orca.sh: an optional tool name first, else the installer
-      case "${1:-}" in
-        orca-box|orca-box-archive|orca-box-login|orca-box-configure-orca|orca-box-install-orca|orca-box-update|orca-box-setup)
-          name="$1"; shift ;;
-        *) name="orca-box-setup" ;;
-      esac ;;
-  esac
-  case "$name" in
-    orca-box)
-      case "${1:-}" in -h|--help) usage_box; exit 0 ;; esac
-      cmd_box "$@" ;;
-    orca-box-archive)
-      case "${1:-}" in -h|--help) usage_archive; exit 0 ;; esac
-      cmd_archive "$@" ;;
-    orca-box-login)
-      case "${1:-}" in -h|--help) usage_login; exit 0 ;; esac
-      cmd_login "$@" ;;
+  local name="${0##*/}" tool=""
+  if ob_is_tool "$name"; then
+    tool="$name"
+  elif [ "$#" -gt 0 ] && ob_is_tool "$1"; then
+    tool="$1"; shift
+  else
+    tool="orca-box-setup"
+  fi
+  case "$tool" in
+    orca-box)              cmd_box "$@" ;;
+    orca-box-archive)      cmd_archive "$@" ;;
+    orca-box-login)        cmd_login "$@" ;;
     orca-box-configure-orca) cmd_configure_orca "$@" ;;
-    orca-box-install-orca)   cmd_install_orca "$@" ;;
-    orca-box-update)         cmd_update "$@" ;;
-    orca-box-setup)          cmd_setup "$@" ;;
+    orca-box-install-orca) cmd_install_orca "$@" ;;
+    orca-box-update)       cmd_update "$@" ;;
+    orca-box-setup)        cmd_setup "$@" ;;
   esac
 }
 

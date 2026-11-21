@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Check the generated orca.sh is up to date
+        run: ./build.sh --check
+
+      - name: Lint orca.sh
+        # orca.sh is the concatenation of src/, so linting it covers every
+        # shell source; the fragments are not standalone scripts.
+        run: shellcheck -S warning orca.sh
+
+      - name: Lint the standalone scripts
+        run: |
+          shellcheck -S warning build.sh
+          shellcheck -S warning tests/run.sh
+          shellcheck -S warning tests/mocks/podman
+          shellcheck -S warning tests/mocks/curl
+
+      - name: Check the python helpers parse
+        run: |
+          for f in src/python/*.py; do
+            python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f"
+          done
+
+      - name: Run the test suite
+        run: tests/run.sh

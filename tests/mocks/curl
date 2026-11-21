@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# tests/mocks/curl — a fake curl for the test suite.
+#
+# It serves files from tests/fixtures/ so the download paths can be tested
+# without a network. Any other URL fails, like a real curl would.
+#
+# Environment:
+#   FAKE_LOG       file to append the command log to
+#   FAKE_FIXTURES  directory to serve files from (default: tests/fixtures)
+LOG="${FAKE_LOG:-/tmp/fake-curl.log}"
+echo "CURL $*" >> "$LOG"
+
+out=""
+url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift ;;
+    -w|--proto|--tlsv1.2|--retry|--connect-timeout|--max-time)
+      [ "$1" = --proto ] && shift
+      shift ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+
+name="${url##*/}"
+src="${FAKE_FIXTURES:-$(dirname "$0")/../fixtures}/$name"
+if [ -f "$src" ]; then
+  if [ -n "$out" ]; then cp "$src" "$out"; else cat "$src"; fi
+  exit 0
+fi
+echo "curl: (22) mock: no such file: $src" >&2
+exit 22
