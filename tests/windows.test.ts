@@ -153,7 +153,8 @@ describe("the commands", () => {
     // What Windows does: one program file, started by its path.
     const dir = mkdtempSync(join(tmpdir(), "orca-box-win-test-"));
     const home = join(dir, "home");
-    const built = join(dir, "built");
+    // A compiled program keeps the .exe on Windows.
+    const built = join(dir, isWindows() ? "built.exe" : "built");
     mkdirSync(home, { recursive: true });
     if (!existsSync(built)) {
       Bun.spawnSync(
@@ -172,7 +173,7 @@ describe("the commands", () => {
     // itself up first.
     const data = join(home, ".local", "share", "orca-box");
     mkdirSync(data, { recursive: true });
-    const installed = join(data, "orca-box");
+    const installed = join(data, isWindows() ? "orca-box.exe" : "orca-box");
     copyFileSync(built, installed);
     chmodSync(installed, 0o755);
 

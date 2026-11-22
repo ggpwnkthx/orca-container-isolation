@@ -7,6 +7,18 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.4]
+
+### Fixed
+- On Windows the program found no programs at all: the programs
+  there have a .exe extension, and only the name without it was looked
+  for. The container engine was never found there.
+
+### Changed
+- The tests run on every platform now: they no longer expect the
+  Linux paths, and the parts that need a shell or a unix socket are
+  skipped where there is none.
+
 ## [1.7.3]
 
 ### Fixed

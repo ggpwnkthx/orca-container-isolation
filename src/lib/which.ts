@@ -9,16 +9,22 @@
 
 import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
+import { isWindows } from "./platform.ts";
 
 /** Is there an executable by this name on PATH? */
 export function hasCommand(name: string): boolean {
-  if (name.includes("/")) {
+  if (name.includes("/") || name.includes("\\")) {
     return isExecutable(name);
   }
   const path = process.env.PATH ?? "";
+  // Windows keeps the extension: the program is podman.exe, and the name
+  // the program asks for is podman.
+  const names = isWindows() ? [name, `${name}.exe`] : [name];
   for (const dir of path.split(delimiter)) {
     if (!dir) continue;
-    if (isExecutable(join(dir, name))) return true;
+    for (const candidate of names) {
+      if (isExecutable(join(dir, candidate))) return true;
+    }
   }
   return false;
 }

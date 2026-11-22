@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
 import { macAppPaths, removeMacApp } from "../src/lib/macapp.ts";
+import { isWindows } from "../src/lib/platform.ts";
 
 const MOCKS = join(import.meta.dir, "mocks");
 
@@ -101,7 +102,9 @@ function install(): { output: string; code: number } {
   };
 }
 
-describe("installing Orca on macOS", () => {
+// The stand-in for hdiutil is a shell script, so these tests only run
+// where there is a shell.
+describe.skipIf(isWindows())("installing Orca on macOS", () => {
   test("the bundle ends up in the Applications folder", () => {
     const { output, code } = install();
     expect(code).toBe(0);

@@ -91,7 +91,8 @@ describe("on Linux", () => {
   test("the app is an AppImage with a menu entry", () => {
     pretendLinux();
     const paths = appPaths();
-    expect(paths.dest).toMatch(/\/orca\.AppImage$/);
+    // The path separator is a backslash on Windows.
+    expect(paths.dest).toMatch(/[\\/]orca\.AppImage$/);
     expect(paths.desktopFile).toMatch(/\.desktop$/);
     expect(assetNames().asset).toMatch(/\.AppImage$/);
   });

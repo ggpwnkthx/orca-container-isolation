@@ -8,7 +8,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, symlinkSync, chmodSync, copyFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, symlinkSync, chmodSync, copyFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -20,9 +20,13 @@ import { hasCommand } from "../src/lib/which.ts";
 import { hasSubidRange } from "../src/lib/setup.ts";
 import { BoxLock } from "../src/lib/box.ts";
 import { macAssetNames } from "../src/lib/macapp.ts";
-import { isMac, programAsset, programAssetUrl } from "../src/lib/platform.ts";
+import { isMac, isWindows, programAsset, programAssetUrl } from "../src/lib/platform.ts";
+import { containerPath } from "../src/lib/hostpath.ts";
 
 const MOCKS = join(import.meta.dir, "mocks");
+
+/** A program that is on every system: sh on POSIX, cmd on Windows. */
+const A_PROGRAM = isWindows() ? "cmd" : "sh";
 
 let work: string;
 let home: string;
@@ -42,6 +46,8 @@ beforeAll(() => {
   mkdirSync(join(home, ".agents", "skills", "demo"), { recursive: true });
   mkdirSync(join(home, ".claude", "skills"), { recursive: true });
   mkdirSync(join(home, ".config", "gh"), { recursive: true });
+  // On Windows the GitHub CLI keeps its credentials under %APPDATA%.
+  mkdirSync(join(home, "AppData", "Roaming", "GitHub CLI"), { recursive: true });
   writeFileSync(join(home, ".agents", "skills", "demo", "SKILL.md"), "skill\n");
   mkdirSync(repo, { recursive: true });
   Bun.spawnSync(["git", "init", "-q", repo]);
@@ -111,6 +117,10 @@ function run(args: string[], env: Record<string, string> = {}): {
         USERPROFILE: home,
         HOMEDRIVE: "",
         HOMEPATH: "",
+        // And for the settings and the app data under others.
+        XDG_CONFIG_HOME: join(home, ".config"),
+        APPDATA: join(home, "AppData", "Roaming"),
+        LOCALAPPDATA: join(home, "AppData", "Local"),
         PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
         FAKE_LOG: log,
         ...env,
@@ -196,7 +206,13 @@ describe("the release lookup", () => {
 
   test("it picks the asset for this architecture", () => {
     const { asset } = assetNames();
-    expect(asset).toMatch(/^orca-linux(-arm64)?\.AppImage$/);
+    if (isMac()) {
+      expect(asset).toMatch(/^orca-macos-(x64|arm64)\.dmg$/);
+    } else if (isWindows()) {
+      expect(asset).toBe("orca-windows-setup.exe");
+    } else {
+      expect(asset).toMatch(/^orca-linux(-arm64)?\.AppImage$/);
+    }
   });
 });
 
@@ -221,11 +237,29 @@ describe("the checksum from latest-linux.yml", () => {
   });
 });
 
+/**
+ * The worktree as the program sees it.
+ *
+ * Git gives the real path (on macOS /var is a link to /private/var) and
+ * writes it with forward slashes, even on Windows. The expectations have
+ * to use the same path.
+ */
+function repoReal(): string {
+  const path = isWindows() ? repo : realpathSync(repo);
+  return path.replace(/\\/g, "/");
+}
+
+/** Where the GitHub CLI keeps its credentials, as the program looks for them. */
+function ghDir(): string {
+  if (isWindows()) return join(home, "AppData", "Roaming", "GitHub CLI");
+  return join(home, ".config", "gh");
+}
+
 describe("running a box", () => {
   test("it runs the agent in the workspace's box", () => {
     const { log } = run(["orca-box", "claude"]);
     expect(log).toContain("PODMAN exec -i");
-    expect(log).toContain(repo);
+    expect(log).toContain(repoReal());
   });
 
   test("an existing box is reused, not recreated", () => {
@@ -241,7 +275,8 @@ describe("running a box", () => {
 
   test("the .git directory is read-only by default", () => {
     const { log } = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
-    expect(log).toContain(`-v ${repo}/.git:${repo}/.git:ro`);
+    const gitDir = join(repoReal(), ".git");
+    expect(log).toContain(`-v ${containerPath(gitDir)}:${containerPath(gitDir)}:ro`);
   });
 
   test("rw mode makes .git writable but keeps hooks read-only", () => {
@@ -249,15 +284,19 @@ describe("running a box", () => {
       FAKE_EXISTING: "0",
       ORCA_BOX_GIT: "rw",
     });
-    expect(log).toContain(`-v ${repo}/.git:${repo}/.git`);
-    expect(log).toContain(`-v ${repo}/.git/hooks:${repo}/.git/hooks:ro`);
-    expect(log).toContain(`-v ${repo}/.git/config:${repo}/.git/config:ro`);
+    const gitDir = join(repoReal(), ".git");
+    const hooks = join(gitDir, "hooks");
+    const config = join(gitDir, "config");
+    expect(log).toContain(`-v ${containerPath(gitDir)}:${containerPath(gitDir)}`);
+    expect(log).toContain(`-v ${containerPath(hooks)}:${containerPath(hooks)}:ro`);
+    expect(log).toContain(`-v ${containerPath(config)}:${containerPath(config)}:ro`);
     expect(log).toContain("GIT_CONFIG_KEY_1=maintenance.auto");
   });
 
   test("the host's skills are mounted read-only", () => {
     const { log } = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
-    expect(log).toContain(`${home}/.agents/skills:${home}/.agents/skills:ro`);
+    const skills = join(home, ".agents/skills");
+    expect(log).toContain(`-v ${containerPath(skills)}:${containerPath(skills)}:ro`);
   });
 
   test("ORCA_BOX_SKILLS=0 turns the skill mounts off", () => {
@@ -270,13 +309,13 @@ describe("running a box", () => {
 
   test("the gh credentials are only mounted when asked for", () => {
     const without = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
-    expect(without.log).not.toContain("/home/node/.config/gh");
+    expect(without.log).not.toContain(ghDir());
 
     const with_ = run(["orca-box", "claude"], {
       FAKE_EXISTING: "0",
       ORCA_BOX_GH_AUTH: "1",
     });
-    expect(with_.log).toContain("/home/node/.config/gh:ro");
+    expect(with_.log).toContain(`${ghDir()}:/home/node/.config/gh:ro`);
   });
 
   test("an invalid ORCA_BOX_GIT is rejected", () => {
@@ -316,7 +355,9 @@ describe("the command line", () => {
 });
 
 describe("talking to Orca", () => {
-  test("it points the agents at orca-box, and puts them back", async () => {
+  // Windows has no unix sockets: Orca publishes a named pipe there, and
+  // the mock daemon cannot make one.
+  test.skipIf(isWindows())("it points the agents at orca-box, and puts them back", async () => {
     // Start the mock Orca daemon.
     const dataDir = join(work, "orca-data");
     const sock = join(work, "orca.sock");
@@ -374,6 +415,8 @@ describe("the platforms", () => {
     const asset = programAsset();
     if (isMac()) {
       expect(asset).toMatch(/^orca-box-darwin-(x64|arm64)$/);
+    } else if (isWindows()) {
+      expect(asset).toMatch(/^orca-box-windows-x64$/);
     } else {
       expect(asset).toMatch(/^orca-box-linux-(x64|arm64)$/);
     }
@@ -384,6 +427,8 @@ describe("the platforms", () => {
     const { asset } = assetNames();
     if (isMac()) {
       expect(asset).toMatch(/^orca-macos-(x64|arm64)\.dmg$/);
+    } else if (isWindows()) {
+      expect(asset).toBe("orca-windows-setup.exe");
     } else {
       expect(asset).toMatch(/^orca-linux(-arm64)?\.AppImage$/);
     }
@@ -426,8 +471,8 @@ describe("the lock on the box", () => {
 
 describe("finding programs on PATH", () => {
   test("it finds a program that is there", () => {
-    // sh is in every POSIX system.
-    expect(hasCommand("sh")).toBe(true);
+    // sh is in every POSIX system; cmd is in every Windows one.
+    expect(hasCommand(A_PROGRAM)).toBe(true);
   });
 
   test("it does not find a program that isn't", () => {
@@ -439,7 +484,7 @@ describe("finding programs on PATH", () => {
     const saved = process.env.PATH;
     try {
       process.env.PATH = "/nonexistent";
-      expect(hasCommand("sh")).toBe(false);
+      expect(hasCommand(A_PROGRAM)).toBe(false);
     } finally {
       process.env.PATH = saved;
     }
@@ -480,7 +525,9 @@ describe("the subordinate id ranges", () => {
 });
 
 describe("the invocation name", () => {
-  test("it is the name the process was called by, so symlinks work", () => {
+  // Windows has no links: the commands are .cmd files that name the
+  // command in the environment, which the other tests cover.
+  test.skipIf(isWindows())("it is the name the process was called by, so symlinks work", () => {
     // The name comes from /proc/self/cmdline, which is what the kernel saw:
     // a link named orca-box-archive keeps that name, even though the
     // runtime resolves argv[1] to the real file.
@@ -522,7 +569,7 @@ describe("the invocation name", () => {
     expect(invokeName()).toBe(invokeName(process.argv[1]));
   });
 
-  test("the name can be read from ps, as macOS needs", () => {
+  test.skipIf(isWindows())("the name can be read from ps, as macOS needs", () => {
     // macOS has no /proc, so the name comes from `ps`. This is the same
     // call macOS makes, and it has to give the same answer.
     const name = psCmdlineName(process.pid);
