@@ -124,7 +124,7 @@ export function skillMounts(): { mounts: string[]; sync: string } {
         continue;
       }
     }
-    mounts.push("-v", `${src}:${src}${ro}`);
+    mounts.push("-v", `${src}:${containerPath(src)}${ro}`);
 
     // A skill kept outside those folders (a link out of the shared store):
     // mount it where it belongs. Rare, and fixed when the box starts.
@@ -146,7 +146,8 @@ export function skillMounts(): { mounts: string[]; sync: string } {
         continue;
       }
       if (!statSync(real).isDirectory()) continue; // skills are folders
-      if (real.startsWith(`${home}/`) && real.slice(home.length + 1).includes("/skills/")) {
+      const inside = real.slice(home.length + 1).replace(/^[\\/]/, "");
+      if (real.startsWith(home) && inside.includes("/skills/")) {
         continue; // already mounted
       }
       mounts.push("-v", `${real}:/home/node/${dir}/${name}${ro}`);
@@ -167,8 +168,7 @@ export function ghMounts(): { mounts: string[]; env: string[] } {
   const env: string[] = [];
   if (setting("ORCA_BOX_GH_AUTH") !== "1") return { mounts, env };
 
-  const xdg = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
-  const ghDir = process.env.GH_CONFIG_DIR ?? join(xdg, "gh");
+  const ghDir = process.env.GH_CONFIG_DIR ?? defaultGhDir();
   if (existsSync(ghDir)) {
     mounts.push("-v", `${ghDir}:/home/node/.config/gh${mountOpt("ro")}`);
   }
@@ -178,6 +178,16 @@ export function ghMounts(): { mounts: string[]; env: string[] } {
     if (value) env.push("-e", name);
   }
   return { mounts, env };
+}
+
+/** Where the GitHub CLI keeps its credentials on this platform. */
+function defaultGhDir(): string {
+  if (isWindows()) {
+    const roaming = process.env.APPDATA ?? join(homedir(), "AppData", "Roaming");
+    return join(roaming, "GitHub CLI");
+  }
+  const xdg = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
+  return join(xdg, "gh");
 }
 
 /** The .git mounts for the box, and the git environment that goes with them. */
@@ -201,23 +211,19 @@ export function gitMounts(
     //   hooks/, config (core.hooksPath, core.fsmonitor, filter drivers,
     //   aliases), info/ (attributes, grafts), refs/tags, other worktrees'
     //   folders, and this worktree's config.worktree when the repo uses them.
-    const gitDir = runCaptured("git", [
-      "-C",
-      worktree,
-      "rev-parse",
-      "--path-format=absolute",
-      "--git-dir",
-    ]).trim();
-    mounts.push("-v", `${common}:${common}${rw}`);
+    const gitDir = gitDirOf(worktree);
+    mounts.push("-v", `${common}:${containerPath(common)}${rw}`);
     for (const part of ["hooks", "config", "info", "refs/tags"]) {
-      if (existsSync(join(common, part))) {
-        mounts.push("-v", `${join(common, part)}:${join(common, part)}${ro}`);
+      const dir = join(common, part);
+      if (existsSync(dir)) {
+        mounts.push("-v", `${dir}:${containerPath(dir)}${ro}`);
       }
     }
     if (existsSync(join(common, "worktrees"))) {
-      mounts.push("-v", `${join(common, "worktrees")}:${join(common, "worktrees")}${ro}`);
+      const worktrees = join(common, "worktrees");
+      mounts.push("-v", `${worktrees}:${containerPath(worktrees)}${ro}`);
       if (gitDir !== common) {
-        mounts.push("-v", `${gitDir}:${gitDir}${rw}`);
+        mounts.push("-v", `${gitDir}:${containerPath(gitDir)}${rw}`);
         const cfg = runCaptured("git", [
           "-C",
           worktree,
@@ -228,9 +234,9 @@ export function gitMounts(
         if (cfg === "true") {
           const worktreeConfig = join(gitDir, "config.worktree");
           if (!existsSync(worktreeConfig)) {
-            Bun.spawnSync(["touch", worktreeConfig]);
+            runIfPresent("touch", [worktreeConfig]);
           }
-          mounts.push("-v", `${worktreeConfig}:${worktreeConfig}${ro}`);
+          mounts.push("-v", `${worktreeConfig}:${containerPath(worktreeConfig)}${ro}`);
         }
       }
     }
@@ -242,29 +248,67 @@ export function gitMounts(
       env.push("-e", `GIT_AUTHOR_${upper}=${value}`, "-e", `GIT_COMMITTER_${upper}=${value}`);
     }
     // No automatic gc/maintenance: it would try to rewrite read-only parts.
-    env.push(
-      "-e",
-      "GIT_CONFIG_COUNT=2",
-      "-e",
-      "GIT_CONFIG_KEY_0=gc.auto",
-      "-e",
-      "GIT_CONFIG_VALUE_0=0",
-      "-e",
-      "GIT_CONFIG_KEY_1=maintenance.auto",
-      "-e",
-      "GIT_CONFIG_VALUE_1=false",
-    );
+    gitConfig(env, "gc.auto", "0");
+    gitConfig(env, "maintenance.auto", "false");
   } else {
-    mounts.push("-v", `${common}:${common}${ro}`);
+    mounts.push("-v", `${common}:${containerPath(common)}${ro}`);
+  }
+  if (isWindows()) {
+    // The files Docker Desktop shares with the virtual machine belong to
+    // root in the container, and git refuses to work in a repository that
+    // belongs to somebody else.
+    gitConfig(env, "safe.directory", "*");
   }
   return { mounts, env };
 }
 
+/**
+ * Add a git setting to the box's environment.
+ *
+ * Git reads these from GIT_CONFIG_COUNT and the numbered keys and values
+ * that go with it, so they apply to every git command in the box without
+ * a configuration file.
+ */
+function gitConfig(env: string[], key: string, value: string): void {
+  let count = 0;
+  for (const entry of env) {
+    if (entry.startsWith("GIT_CONFIG_COUNT=")) {
+      count = Number(entry.slice("GIT_CONFIG_COUNT=".length));
+    }
+  }
+  env.push(
+    "-e",
+    `GIT_CONFIG_COUNT=${count + 1}`,
+    "-e",
+    `GIT_CONFIG_KEY_${count}=${key}`,
+    "-e",
+    `GIT_CONFIG_VALUE_${count}=${value}`,
+  );
+}
+
+/**
+ * The absolute path of a worktree's own .git directory.
+ *
+ * --path-format is git 2.31 and newer; older versions get the plain
+ * path, which is relative to the worktree.
+ */
+function gitDirOf(worktree: string): string {
+  const modern = runCaptured("git", [
+    "-C",
+    worktree,
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-dir",
+  ]).trim();
+  if (modern) return modern;
+  const plain = runCaptured("git", ["-C", worktree, "rev-parse", "--git-dir"]).trim();
+  if (!plain) return "";
+  return isAbsolute(plain) ? plain : join(worktree, plain);
+}
+
 /** The name of a box, derived from its worktree. */
 export function boxName(worktree: string): string {
-  const slug = worktree
-    .split("/")
-    .pop()!
+  const slug = basename(worktree)
     .replace(/[^A-Za-z0-9_.-]/g, "-")
     .slice(0, 40);
   const hash = createHash("sha1").update(worktree).digest("hex").slice(0, 8);
@@ -557,7 +601,7 @@ export async function runAgent(args: string[]): Promise<void> {
         'bash -c "$1" _ "$2" >/dev/null 2>&1; shift 2; exec "$@"',
         "_",
         skillSync,
-        homedir(),
+        containerPath(homedir()),
         ...args,
       ],
       { stdout: "inherit", stderr: "inherit", stdin: "inherit" },
@@ -607,7 +651,10 @@ export async function runAgent(args: string[]): Promise<void> {
   }
 
   if (needCreate) {
-    const mounts = [`-v`, `${target.worktree}:${target.worktree}${mountOpt("rw")}`];
+    const mounts = [
+      "-v",
+      `${target.worktree}:${containerPath(target.worktree)}${mountOpt("rw")}`,
+    ];
     const git = gitMounts(target, gitMode);
     mounts.push(...git.mounts);
     prepareHome();
@@ -631,7 +678,7 @@ export async function runAgent(args: string[]): Promise<void> {
         ...gh.env,
         ...mounts,
         "-w",
-        target.worktree,
+        containerPath(target.worktree),
         "-e",
         `IDLE_SECONDS=${idleSeconds}`,
         ...git.env,
@@ -641,7 +688,7 @@ export async function runAgent(args: string[]): Promise<void> {
         watchdogScript(),
         "_",
         skillSync,
-        homedir(),
+        containerPath(homedir()),
       ],
       { stdout: "ignore", stderr: "inherit", stdin: "ignore" },
     );
@@ -664,13 +711,30 @@ export async function runAgent(args: string[]): Promise<void> {
   // so the agent sees them without waiting for the box's next sweep.
   if (skillSync) {
     Bun.spawnSync(
-      [engineBinary(), "exec", name, "bash", "-c", skillSync, "_", homedir()],
+      [
+        engineBinary(),
+        "exec",
+        name,
+        "bash",
+        "-c",
+        skillSync,
+        "_",
+        containerPath(homedir()),
+      ],
       { stdout: "ignore", stderr: "ignore", stdin: "ignore" },
     );
   }
 
   const proc = Bun.spawn(
-    [engineBinary(), "exec", ...io, "-w", target.here, name, ...args],
+    [
+      engineBinary(),
+      "exec",
+      ...io,
+      "-w",
+      containerPath(target.here),
+      name,
+      ...args,
+    ],
     { stdout: "inherit", stderr: "inherit", stdin: "inherit" },
   );
   process.exit(await proc.exited);

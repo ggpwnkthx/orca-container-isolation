@@ -212,6 +212,13 @@ export function userArgs(): string[] {
     case "podman":
       return ["--userns=keep-id:uid=1000,gid=1000", "--user", "1000:1000"];
     case "docker":
+      if (isWindows()) {
+        // Windows has no user ids of its own. The files Docker Desktop
+        // shares with the virtual machine belong to root in the container,
+        // but everyone may write to them, so the agent runs as the image's
+        // own user (the one that owns the home volume).
+        return ["--user", "1000:1000"];
+      }
       return ["--user", `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`];
     case "docker-rootless":
       return ["--user", "0:0", "-e", "IS_SANDBOX=1"];
@@ -229,6 +236,11 @@ export function prepareHome(): void {
   let owner: string;
   switch (engineMode()) {
     case "docker":
+      if (isWindows()) {
+        // The home volume keeps the ownership the image gives it, which is
+        // the user the agents run as.
+        return;
+      }
       owner = `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`;
       break;
     case "docker-rootless":

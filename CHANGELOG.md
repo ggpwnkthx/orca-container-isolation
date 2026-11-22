@@ -7,6 +7,24 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.6.0]
+
+### Added
+- **macOS support.** The program now runs on macOS as well as on
+  Linux:
+  - the Orca app is installed from the release's disk image: the
+    image is mounted and `Orca.app` is copied to `~/Applications`
+    (`ORCA_APP_DIR`)
+  - the daily update is a launchd agent (`~/Library/LaunchAgents`)
+    instead of a systemd timer
+  - the per-workspace lock uses `lockf` (macOS) as well as `flock`
+    (Linux), and falls back to a lock file of its own when neither is
+    there
+  - the name a command was called by is read from `ps`, since macOS
+    has no `/proc`
+  - `~/.local/bin` is not on the PATH by default on macOS, so the
+    setup says how to add it
+
 ## [1.5.0]
 
 ### Added

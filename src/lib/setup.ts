@@ -231,14 +231,21 @@ export async function uninstall(options: SetupOptions): Promise<void> {
   }
 
   say(`Removing scripts from ${bin} and settings`);
+  if (isMac() || isWindows()) {
+    // The daily update, if it was turned on.
+    removeAutoUpdate();
+  }
   for (const tool of [...TOOLS, "orca-box-lib.sh"]) {
-    try {
-      unlinkSync(join(bin, tool));
-    } catch {
-      // Not there.
+    for (const name of isWindows() ? [tool, `${tool}.cmd`] : [tool]) {
+      try {
+        unlinkSync(join(bin, name));
+      } catch {
+        // Not there.
+      }
     }
   }
-  Bun.spawnSync(["rm", "-rf", data, CONFIG_FILE_DIR]);
+  rmSync(data, { recursive: true, force: true });
+  rmSync(CONFIG_FILE_DIR, { recursive: true, force: true });
   say(
     "Done. If you added orca-box custom agents or an Archive Script in Orca, remove them.",
   );
@@ -360,7 +367,11 @@ export async function setup(options: SetupOptions): Promise<void> {
     } catch {
       // Not there.
     }
-    symlinkSync(program, link);
+    if (isWindows()) {
+      writeWindowsShim(link, program, tool);
+    } else {
+      symlinkSync(program, link);
+    }
   }
   writeFileSync(containerfilePath, containerfile());
   rememberEngine();
@@ -409,7 +420,22 @@ export async function setup(options: SetupOptions): Promise<void> {
 
   const pathEntries = (process.env.PATH ?? "").split(":");
   if (!pathEntries.includes(bin)) {
-    warn(`${bin} is not on your PATH; Orca uses the full paths, so that's fine.`);
+    if (isWindows()) {
+      // On Windows the commands are .cmd files, and they are only found
+      // if their folder is on the PATH.
+      if (addToUserPath(bin)) {
+        say(`Added ${bin} to your PATH (open a new terminal to use it)`);
+      } else {
+        warn(`${bin} is not on your PATH; add it to use the commands by name`);
+      }
+    } else {
+      warn(`${bin} is not on your PATH; Orca uses the full paths, so that's fine.`);
+      if (isMac()) {
+        plain(
+          `    To run the commands by name, add this to your shell profile:\n      export PATH="$HOME/.local/bin:$PATH"`,
+        );
+      }
+    }
   }
 
   // --- 4. Orca settings ----------------------------------------------------
@@ -441,6 +467,49 @@ export async function setup(options: SetupOptions): Promise<void> {
   }
 
   printSummary(options, orcaDone, runningFrom);
+}
+
+/**
+ * Add a folder to the user's PATH on Windows.
+ *
+ * The user's own PATH is changed, not the machine's, so nothing needs
+ * administrator rights. It is read and written with .NET, which does not
+ * truncate it the way `setx` does.
+ */
+function addToUserPath(dir: string): boolean {
+  const script = [
+    "$p = [Environment]::GetEnvironmentVariable('Path','User')",
+    "if ($p -and $p.Split(';') -notcontains '${dir}') {",
+    "  [Environment]::SetEnvironmentVariable('Path', $p + ';${dir}', 'User')",
+    "}",
+  ].join("; ");
+  const done = runIfPresent("powershell", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    script,
+  ]);
+  return done === 0;
+}
+
+/**
+ * Write a command for Windows.
+ *
+ * Windows cannot run a program through a link without extra privileges,
+ * and a .cmd file cannot be started by another program without a shell.
+ * So the commands are small .cmd files that say which command they are
+ * and then run the program; they are meant to be typed in a shell.
+ */
+function writeWindowsShim(shim: string, program: string, tool: string): void {
+  writeFileSync(
+    shim,
+    [
+      "@echo off",
+      `set "ORCA_BOX_TOOL=${tool}"`,
+      `"${program}" %*`,
+      "",
+    ].join("\r\n"),
+  );
 }
 
 /** Remove every box. */
@@ -499,26 +568,46 @@ export function installProgram(dest: string): void {
   const source = currentProgram();
   if (!source) {
     die(
-      "couldn't find the program to install; run the installer from a checkout",
+      "this is a source checkout, not a program that can be installed.\n" +
+        "    Run ./build.sh and install the program it writes to dist/, or\n" +
+        "    download the release for your platform.",
     );
   }
   if (source === dest) return;
   const tmp = `${dest}.${process.pid}.tmp`;
   copyFileSync(source, tmp);
   chmodSync(tmp, 0o755);
-  Bun.spawnSync(["mv", "-f", tmp, dest]);
+  // Windows will not replace a program that is running, but it will let
+  // it be renamed: the old copy is moved out of the way first.
+  const old = `${dest}.old`;
+  try {
+    renameSync(dest, old);
+  } catch {
+    // There was no old copy.
+  }
+  renameSync(tmp, dest);
+  try {
+    rmSync(old, { force: true });
+  } catch {
+    // It was still running; it goes when the program does.
+  }
 }
 
-/** The file this program is running from, if any. */
+/**
+ * The file this program is running from, if any.
+ *
+ * A compiled program: execPath is the executable itself. A program run
+ * from source has no file to install, so it is not returned.
+ */
 export function currentProgram(): string {
+  const fromArgv = process.argv[1];
+  if (fromArgv && fromArgv.endsWith(".ts")) {
+    // Running from source: there is no program to install.
+    return "";
+  }
   // A compiled program: execPath is the executable itself.
   const exec = process.execPath;
   if (exec && !exec.includes("bunfs") && existsSync(exec)) return exec;
-  // Running from source: argv[1] is the script.
-  const fromArgv = process.argv[1];
-  if (fromArgv && existsSync(fromArgv) && !fromArgv.includes("bunfs")) {
-    return fromArgv;
-  }
   return "";
 }
 
@@ -544,16 +633,34 @@ function printSummary(
   plain(" 3. " + settingsStep(options, orcaDone, bin, yoloFlag));
   plain();
   plain(" 4. Optional, per repository in Orca: set the Archive Script to");
-  plain(`      ${join(bin, "orca-box-archive")}`);
+  plain(`      ${archiveCommand(bin)}`);
   plain("    (boxes also delete themselves after 2 minutes with nothing running).");
   plain();
   plain(" Update later with: orca-box-update  (add --agents --orca to refresh the");
   plain(" agent image and Orca too; --enable-auto to check daily)");
 }
 
+/**
+ * The command that removes the boxes.
+ *
+ * On Windows a .cmd file cannot be started by another program without a
+ * shell, so the program itself is named, with the command as its first
+ * argument.
+ */
+function archiveCommand(bin: string): string {
+  if (isWindows()) {
+    return `"${paths().program}" orca-box-archive`;
+  }
+  return join(bin, "orca-box-archive");
+}
+
 function appStep(options: SetupOptions, dest: string, runningFrom: string): string {
   if (!options.installApp) return "Orca app: unchanged (--no-orca-app).";
-  let text = `Orca app: ${dest}, in your application menu as "Orca".`;
+  let text = isMac()
+    ? `Orca app: ${dest}, in your Applications folder.`
+    : isWindows()
+      ? `Orca app: ${dest || "not installed yet"}.`
+      : `Orca app: ${dest}, in your application menu as "Orca".`;
   text += "\n    Orca keeps itself updated; orca-box-setup --update reinstalls the latest.";
   if (runningFrom && runningFrom !== dest) {
     text += `\n    Orca is running from ${runningFrom} right now. Quit it and start`;
