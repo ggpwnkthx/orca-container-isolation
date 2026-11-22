@@ -1,38 +1,41 @@
 # Image shared by every per-worktree agent container.
-# Built by orca.sh as localhost/orca-agents:latest (orca-box-setup --update to refresh).
+# Built by orca-box as localhost/orca-agents:latest (orca-box-setup --update to refresh).
 FROM docker.io/library/node:24-bookworm
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      git ripgrep fd-find jq python3 python3-venv build-essential ca-certificates curl less \
- && rm -rf /var/lib/apt/lists/*
+# The agent image needs: git, ripgrep, fd, jq, python, a compiler for
+# native npm packages, and the GitHub CLI.
+#
+# The GitHub CLI comes from the official repository the GitHub CLI
+# maintainers publish, not from a tarball. That matters for portability:
+# apt picks the package matching the machine's architecture, so the same
+# Containerfile works on amd64 and arm64 with nothing to detect and no
+# per-architecture checksums to keep up to date. The keyring below is the
+# trust anchor -- its checksum is the one GitHub publishes at
+# https://cli.github.com/packages -- and apt checks the repository's
+# signature against it.
+#
+# Debian calls find-in-files "fdfind"; the agents ask for "fd", so that is
+# linked too.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      git ripgrep fd-find jq python3 python3-venv build-essential ca-certificates curl less; \
+    mkdir -p /etc/apt/keyrings; \
+    curl -fsSL -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+      https://cli.github.com/packages/githubcli-archive-keyring.gpg; \
+    echo "6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b  /etc/apt/keyrings/githubcli-archive-keyring.gpg" | sha256sum -c -; \
+    echo "deb [signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gh; \
+    rm -rf /var/lib/apt/lists/*; \
+    ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
 # Claude Code, Codex and pi, installed system-wide so the shared $HOME volume
 # doesn't hide them. Rebuild the image to update (auto-updaters can't write here).
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent \
  && npm install -g @anthropic-ai/claude-code @openai/codex \
  && npm cache clean --force
-
-# GitHub CLI, for agents that work with issues, pull requests and gists. From
-# the official release (Debian's package is years behind). Pinned, so the
-# build is reproducible: bump the version and the checksums to update.
-#
-# The architecture is chosen inside the container, with uname -m, rather than
-# from a build argument: build arguments like TARGETARCH need buildkit, and
-# a plain "podman build" doesn't set them.
-ARG GH_VERSION=2.105.0
-RUN set -eux; \
-    case "$(uname -m)" in \
-      x86_64)  gh_arch=amd64; gh_sha=79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f ;; \
-      aarch64|arm64) gh_arch=arm64; gh_sha=b1278c75107423d818f1937fd92cafc9e5e9b606631568f68d7fb816f5885a02 ;; \
-      *) echo "no GitHub CLI build for $(uname -m)" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL -o /tmp/gh.tar.gz \
-      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz"; \
-    echo "${gh_sha}  /tmp/gh.tar.gz" | sha256sum -c -; \
-    tar -xzf /tmp/gh.tar.gz -C /tmp; \
-    install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh; \
-    rm -rf /tmp/gh.tar.gz "/tmp/gh_${GH_VERSION}_linux_${gh_arch}"
 
 ENV DISABLE_AUTOUPDATER=1
 

@@ -17,7 +17,12 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ### Fixed
 - The agent image builds on arm64: the GitHub CLI was pinned to the amd64
-  build, so `gh` in the box was the wrong architecture.
+  build, so `gh` in the box was the wrong architecture. It now comes from
+  the official apt repository the GitHub CLI maintainers publish, which has
+  a package per architecture: apt picks the right one, so there is no
+  architecture to detect and no per-architecture checksum to maintain.
+- `fd` is linked in the box. Debian installs it as `fdfind`, and the agents
+  ask for `fd`.
 - `orca-box-update --disable-auto` no longer fails on a system without
   systemd.
 - Finding a program no longer shells out to `which`, which isn't installed

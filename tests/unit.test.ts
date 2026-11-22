@@ -82,6 +82,19 @@ describe("the agent image", () => {
     expect(text).toContain("pi-coding-agent");
   });
 
+  test("the GitHub CLI comes from a repository, not a tarball", async () => {
+    // A tarball has to be fetched for the right architecture, which means
+    // detecting the architecture and keeping a checksum per architecture.
+    // The official apt repository has one package per architecture and apt
+    // picks the right one, so there is nothing to detect.
+    const { containerfile } = await import("../src/assets/skill-sync.ts");
+    const text = containerfile();
+    expect(text).toContain("cli.github.com/packages");
+    expect(text).toContain("signed-by=");
+    expect(text).not.toMatch(/linux_(amd64|arm64)/);
+    expect(text).not.toMatch(/uname -m/);
+  });
+
   test("the skill-sync script lists the skill folders", async () => {
     const { skillSyncScript } = await import("../src/assets/skill-sync.ts");
     const script = skillSyncScript();
