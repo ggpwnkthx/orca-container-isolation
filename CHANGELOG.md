@@ -7,6 +7,13 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.1]
+
+### Fixed
+- The program now knows which command it was started as on every
+  platform: the name in the environment (Windows), the first word of
+  the command line (Linux and macOS) or the program itself.
+
 ## [1.1.0]
 
 ### Added
