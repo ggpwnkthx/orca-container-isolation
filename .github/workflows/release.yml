@@ -3,8 +3,9 @@ name: Release
 # Tag a version (v1.2.3) to publish a release. The release carries a
 # self-contained executable for each platform, plus its checksums.
 #
-# Users install from the latest release, so a tagged release is what they
-# get; the main branch stays the moving target.
+# The executables are what people install: they download the one for their
+# machine and run it. So a tagged release is what they get; the main
+# branch stays the moving target.
 on:
   push:
     tags: ['v*']
@@ -54,5 +55,7 @@ jobs:
             dist/orca-box-linux-arm64 \
             dist/orca-box-linux-x64-musl \
             dist/orca-box-linux-arm64-musl \
-            dist/SHA256SUMS \
-            install.sh
+            dist/orca-box-darwin-x64 \
+            dist/orca-box-darwin-arm64 \
+            dist/orca-box-windows-x64.exe \
+            dist/SHA256SUMS

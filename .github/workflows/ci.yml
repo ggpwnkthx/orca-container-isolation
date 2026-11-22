@@ -48,6 +48,98 @@ jobs:
           readelf -l dist/orca-box-linux-x64-musl | grep -q "ld-musl" \
             || (echo "the musl build wants the glibc loader" >&2; exit 1)
 
+      - name: Check the macOS builds are macOS
+        run: |
+          for asset in dist/orca-box-darwin-x64 dist/orca-box-darwin-arm64; do
+            head -c 4 "$asset" | od -c | grep -q "M  a  c  h" \
+              || (echo "$asset is not a macOS executable" >&2; exit 1)
+          done
+
+      - name: Check the Windows build is a Windows program
+        run: |
+          head -c 2 dist/orca-box-windows-x64.exe | od -c | grep -q "M  Z" \
+            || (echo "the Windows build is not a Windows program" >&2; exit 1)
+
+  # The program has to work on macOS as well as on Linux, so it is built
+  # and tested there too.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun x tsc --noEmit
+
+      - name: Test
+        run: bun test
+
+      - name: Build
+        run: ./build.sh
+
+      - name: Check the built program works
+        run: |
+          asset="$(ls dist/orca-box-darwin-*)"
+          "$asset" orca-box --help > /dev/null
+          "$asset" orca-box-setup --help > /dev/null
+          "$asset" --version
+
+      - name: Check the program knows it is on macOS
+        run: |
+          # The command names have to survive being run through a symlink,
+          # and macOS has no /proc to read them from.
+          asset="$(ls dist/orca-box-darwin-*)"
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$PWD/$asset" "$HOME/.local/bin/orca-box-archive"
+          "$HOME/.local/bin/orca-box-archive" --help | grep -q orca-box-archive
+
+  # The program has to work on Windows as well, so it is built and tested
+  # there too.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun x tsc --noEmit
+
+      - name: Test
+        run: bun test
+
+      - name: Build
+        run: |
+          bun build --compile `
+            --target bun-windows-x64 `
+            --outfile dist\orca-box-windows-x64.exe `
+            --define 'ORCA_BOX_VERSION="test"' `
+            src\main.ts
+
+      - name: Check the built program works
+        run: |
+          .\dist\orca-box-windows-x64.exe orca-box --help > $null
+          .\dist\orca-box-windows-x64.exe orca-box-setup --help > $null
+          .\dist\orca-box-windows-x64.exe --version
+
+      - name: Check the commands are started by name
+        run: |
+          # Windows has no links, so the commands are started by naming
+          # the command as the first argument.
+          .\dist\orca-box-windows-x64.exe orca-box-archive --help |
+            Select-String -Pattern "orca-box-archive"
+
   shell:
     runs-on: ubuntu-latest
     steps:
@@ -58,8 +150,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck
 
-      # The only shell left is the installer and the build script.
+      # The only shell left is the build script.
       - name: Lint the shell
         run: |
-          shellcheck -S warning install.sh
           shellcheck -S warning build.sh

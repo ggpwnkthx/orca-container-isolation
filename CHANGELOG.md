@@ -7,6 +7,17 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.0]
+
+### Added
+- The release carries an executable for every platform: Linux (x64
+  and arm64, glibc and musl), macOS (Apple silicon and Intel) and
+  Windows.
+
+### Fixed
+- `build.sh` no longer needs `readlink -f` and `sha256sum`, which
+  macOS doesn't have.
+
 ## [1.6.1]
 
 ### Fixed

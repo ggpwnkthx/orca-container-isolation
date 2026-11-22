@@ -1,13 +1,14 @@
 {
   "name": "orca-box",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "Run Claude Code, Codex and pi from Orca inside a container per workspace",
   "type": "module",
   "private": true,
   "module": "src/main.ts",
   "scripts": {
-    "build": "bun run scripts/build.ts",
-    "check": "bun run scripts/check.ts",
+    "build": "./build.sh",
+    "build:all": "./build.sh --all",
+    "check": "bun x tsc --noEmit && bun test",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },

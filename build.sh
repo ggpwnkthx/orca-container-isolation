@@ -8,9 +8,15 @@
 #   ./build.sh              build for this machine, into dist/
 #   ./build.sh --all        build for every platform we release
 #   ./build.sh --check      check that dist/ is up to date (used by CI)
+#
+# The script runs on Linux and on macOS, and builds for every platform from
+# either one: Bun cross-compiles the other platforms' executables.
 set -euo pipefail
 
-cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+# This script's own directory, without relying on `readlink -f` (which macOS
+# doesn't have).
+here="$(cd "$(dirname "$0")" && pwd -P)"
+cd "$here"
 
 VERSION="$(cat VERSION)"
 OUT=dist
@@ -32,12 +38,16 @@ fi
 #
 # The musl builds are for Alpine and other musl systems; the others are
 # for glibc systems. A glibc build needs glibc 2.17 or newer, which covers
-# every glibc distribution still in use.
+# every glibc distribution still in use. The darwin builds are for macOS
+# and the windows build for Windows.
 TARGETS=(
   "bun-linux-x64:orca-box-linux-x64"
   "bun-linux-arm64:orca-box-linux-arm64"
   "bun-linux-x64-musl:orca-box-linux-x64-musl"
   "bun-linux-arm64-musl:orca-box-linux-arm64-musl"
+  "bun-darwin-x64:orca-box-darwin-x64"
+  "bun-darwin-arm64:orca-box-darwin-arm64"
+  "bun-windows-x64:orca-box-windows-x64.exe"
 )
 
 mkdir -p "$OUT"
@@ -57,21 +67,49 @@ build_one() {
   chmod 755 "$out"
 }
 
+# The checksums, so a download can be verified.
+#
+# sha256sum is GNU; macOS has shasum with the same output.
+checksums() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$@"
+  else
+    shasum -a 256 "$@"
+  fi
+}
+
 if [ "$ALL" = 1 ]; then
   for entry in "${TARGETS[@]}"; do
     build_one "${entry%%:*}" "${entry##*:}"
   done
 else
   # The host's own platform.
-  case "$(uname -m)" in
-    x86_64|amd64) build_one "bun-linux-x64" "orca-box-linux-x64" ;;
-    aarch64|arm64) build_one "bun-linux-arm64" "orca-box-linux-arm64" ;;
-    *) echo "build.sh: no build for $(uname -m)" >&2; exit 1 ;;
+  case "$(uname -s)" in
+    Darwin)
+      case "$(uname -m)" in
+        x86_64) build_one "bun-darwin-x64" "orca-box-darwin-x64" ;;
+        arm64)  build_one "bun-darwin-arm64" "orca-box-darwin-arm64" ;;
+        *) echo "build.sh: no build for $(uname -m)" >&2; exit 1 ;;
+      esac
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      case "$(uname -m)" in
+        x86_64|amd64) build_one "bun-windows-x64" "orca-box-windows-x64.exe" ;;
+        *) echo "build.sh: no build for $(uname -m)" >&2; exit 1 ;;
+      esac
+      ;;
+    *)
+      case "$(uname -m)" in
+        x86_64|amd64) build_one "bun-linux-x64" "orca-box-linux-x64" ;;
+        aarch64|arm64) build_one "bun-linux-arm64" "orca-box-linux-arm64" ;;
+        *) echo "build.sh: no build for $(uname -m)" >&2; exit 1 ;;
+      esac
+      ;;
   esac
 fi
 
 # The checksums, so a download can be verified.
-( cd "$OUT" && sha256sum orca-box-linux-* > SHA256SUMS 2>/dev/null ) || true
+( cd "$OUT" && checksums orca-box-* > SHA256SUMS 2>/dev/null ) || true
 
 if [ "$CHECK" = 1 ]; then
   # Rebuild into a scratch copy and compare.
