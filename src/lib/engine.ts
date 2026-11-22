@@ -1,0 +1,315 @@
+/**
+ * The container engine: Podman if it works, otherwise Docker.
+ *
+ * Everything that talks to a container goes through here, so the rest of the
+ * code never has to care which engine is in use.
+ */
+
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { CONFIG_FILE_DIR, setting } from "./config.ts";
+import { die, warn } from "./output.ts";
+
+export type EngineMode = "podman" | "docker" | "docker-rootless";
+
+let mode: EngineMode | null = null;
+
+/** The engine binary: "podman" or "docker". */
+export function engineBinary(): "podman" | "docker" {
+  if (mode === null) initEngine();
+  return mode === "podman" ? "podman" : "docker";
+}
+
+/** The full mode, including whether Docker is rootless. */
+export function engineMode(): EngineMode {
+  if (mode === null) initEngine();
+  return mode as EngineMode;
+}
+
+/** True if the Docker daemon is running rootless. */
+export function dockerIsRootless(): boolean {
+  try {
+    const out = runCaptured("docker", [
+      "info",
+      "--format",
+      "{{json .SecurityOptions}}",
+    ]);
+    return out.includes("rootless");
+  } catch {
+    return false;
+  }
+}
+
+function engineHelp(): void {
+  const has = (bin: string) => commandWorks("which", [bin]);
+  if (has("docker")) {
+    process.stderr.write(
+      "orca-box: Docker is installed but not usable by your user. Start it with\n" +
+        "  sudo systemctl enable --now docker\n" +
+        'and add yourself to the docker group (sudo usermod -aG docker "$USER", then\n' +
+        "log out and back in), or install Podman instead.\n",
+    );
+  } else if (has("podman")) {
+    process.stderr.write(
+      "orca-box: podman is installed but 'podman info' fails; run it to see why.\n",
+    );
+  } else {
+    process.stderr.write(
+      "orca-box: neither Podman nor Docker was found. Install one of them.\n",
+    );
+  }
+}
+
+/**
+ * Work out which engine to use and remember it.
+ *
+ * The choice is recorded in the config dir, so a later run uses the same one
+ * (Docker's rootless-ness in particular cannot be re-detected reliably).
+ */
+export function initEngine(force = false): EngineMode {
+  if (mode !== null && !force) return mode;
+
+  const engineFile = join(CONFIG_FILE_DIR, "engine");
+  let saved = "";
+  if (existsSync(engineFile)) {
+    try {
+      saved = readFileSync(engineFile, "utf8").trim();
+    } catch {
+      saved = "";
+    }
+  }
+
+  const wanted = process.env.ORCA_BOX_ENGINE ?? "";
+  if (wanted) {
+    if (wanted === "podman") {
+      mode = "podman";
+    } else if (wanted === "docker") {
+      // Reuse the recorded rootless/rootful mode, else detect it.
+      mode = saved.startsWith("docker") ? (saved as EngineMode) : dockerIsRootless() ? "docker-rootless" : "docker";
+    } else {
+      die("orca-box: ORCA_BOX_ENGINE must be podman or docker");
+    }
+  } else if (saved) {
+    mode = saved as EngineMode;
+  } else {
+    mode = detectMode();
+    if (!mode) {
+      engineHelp();
+      process.exit(1);
+    }
+  }
+
+  const bin = engineBinary();
+  if (!commandWorks("which", [bin])) {
+    die(
+      `orca-box: ${bin} not found (recorded in ${engineFile}); rerun orca-box-setup`,
+    );
+  }
+  return mode;
+}
+
+function detectMode(): EngineMode | null {
+  if (commandWorks("podman", ["info"])) return "podman";
+  if (commandWorks("docker", ["info"])) {
+    return dockerIsRootless() ? "docker-rootless" : "docker";
+  }
+  return null;
+}
+
+function commandWorks(bin: string, args: string[]): boolean {
+  try {
+    const proc = Bun.spawnSync([bin, ...args], {
+      stdout: "ignore",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+    return proc.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Record the engine in use, so later runs agree. */
+export function rememberEngine(): void {
+  Bun.spawnSync(["mkdir", "-p", CONFIG_FILE_DIR]);
+  writeFileSync(join(CONFIG_FILE_DIR, "engine"), `${engineMode()}\n`);
+}
+
+/**
+ * Run an engine command, returning its output.
+ *
+ * The engine's stderr is passed through, so the user sees podman's own
+ * error messages.
+ */
+export function runCaptured(bin: string, args: string[]): string {
+  const proc = Bun.spawnSync([bin, ...args], {
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  return new TextDecoder().decode(proc.stdout);
+}
+
+/**
+ * Run an engine command, inheriting stdio, and return its exit status.
+ *
+ * Used for the long-running, interactive commands: the agent in the box,
+ * the login shell. The child's stdin and stdout are the terminal itself.
+ */
+export function runInteractive(bin: string, args: string[]): number {
+  const proc = Bun.spawnSync([bin, ...args], {
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "inherit",
+  });
+  return proc.exitCode ?? 0;
+}
+
+/** Run an engine command quietly, ignoring failures. */
+export function runQuiet(bin: string, args: string[]): void {
+  try {
+    Bun.spawnSync([bin, ...args], {
+      stdout: "ignore",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+  } catch {
+    // The engine may not be there; the caller checks for that separately.
+  }
+}
+
+/**
+ * The user and security flags every container gets.
+ *
+ *   podman:          map your user onto the image's node user (UID 1000)
+ *   docker:          run as your own UID/GID
+ *   docker-rootless: container root *is* your user on the host; IS_SANDBOX=1
+ *                    lets Claude Code skip permissions as root (undocumented)
+ */
+export function userArgs(): string[] {
+  switch (engineMode()) {
+    case "podman":
+      return ["--userns=keep-id:uid=1000,gid=1000", "--user", "1000:1000"];
+    case "docker":
+      return ["--user", `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`];
+    case "docker-rootless":
+      return ["--user", "0:0", "-e", "IS_SANDBOX=1"];
+  }
+}
+
+/**
+ * Make the shared home volume writable by the user the agents run as.
+ *
+ * Only Docker needs this, and only when that user isn't the image's
+ * UID 1000.
+ */
+export function prepareHome(): void {
+  const volume = setting("ORCA_BOX_HOME_VOLUME");
+  let owner: string;
+  switch (engineMode()) {
+    case "docker":
+      owner = `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`;
+      break;
+    case "docker-rootless":
+      owner = "0:0";
+      break;
+    default:
+      return;
+  }
+  if (owner === "1000:1000") return;
+
+  Bun.spawnSync(
+    [
+      engineBinary(),
+      "run",
+      "--rm",
+      "--user",
+      "0:0",
+      "-v",
+      `${volume}:/home/node`,
+      setting("ORCA_BOX_IMAGE"),
+      "sh",
+      "-c",
+      '[ "$(stat -c %u:%g /home/node)" = "$1" ] || chown -R "$1" /home/node',
+      "_",
+      owner,
+    ],
+    { stdout: "ignore", stderr: "ignore", stdin: "ignore" },
+  );
+}
+
+/**
+ * The mount option for a bind mount: "ro" or "rw".
+ *
+ * SELinux relabeling ("z") is added on hosts that have SELinux.
+ */
+export function mountOpt(mode: "ro" | "rw"): string {
+  let opts = mode === "ro" ? "ro" : "";
+  if (existsSync("/sys/fs/selinux/enforce")) {
+    opts = opts ? `${opts},z` : "z";
+  }
+  return opts ? `:${opts}` : "";
+}
+
+/** The ids of every orca-box container, found by label or by image. */
+export function boxIds(): string[] {
+  const bin = engineBinary();
+  const ids = new Set<string>();
+  for (const args of [
+    ["ps", "-aq", "--filter", "label=orca.worktree"],
+    ["ps", "-aq", "--filter", `ancestor=${setting("ORCA_BOX_IMAGE")}`],
+  ]) {
+    try {
+      for (const line of runCaptured(bin, args).split("\n")) {
+        const id = line.trim();
+        if (id) ids.add(id);
+      }
+    } catch {
+      // A missing engine just means no boxes.
+    }
+  }
+  return [...ids];
+}
+
+/** The worktree a container was created for, if any. */
+export function worktreeOf(id: string): string {
+  try {
+    return runCaptured(engineBinary(), [
+      "inspect",
+      "-f",
+      '{{index .Config.Labels "orca.worktree"}}',
+      id,
+    ]).trim();
+  } catch {
+    return "";
+  }
+}
+
+/** A container's name, without the engine's leading slash. */
+export function nameOf(id: string): string {
+  let name = id;
+  try {
+    name = runCaptured(engineBinary(), ["inspect", "-f", "{{.Name}}", id]).trim();
+  } catch {
+    // Fall back to the id.
+  }
+  return name.replace(/^\//, "");
+}
+
+/** Build the agent image from a folder holding the Containerfile. */
+export function buildImage(dir: string, update = false): void {
+  const args = ["build", "-f", join(dir, "Containerfile"), "-t", setting("ORCA_BOX_IMAGE")];
+  if (update) {
+    if (engineBinary() === "podman") args.push("--pull=always", "--no-cache");
+    else args.push("--pull", "--no-cache");
+  }
+  args.push(dir);
+  const proc = Bun.spawnSync([engineBinary(), ...args], {
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "inherit",
+  });
+  if (proc.exitCode !== 0) {
+    warn("the agent image could not be built; see the errors above");
+  }
+}

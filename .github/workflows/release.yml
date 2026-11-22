@@ -1,8 +1,10 @@
 name: Release
 
-# Tag a version (v1.2.3) to publish a release with the single-file orca.sh
-# attached. The release asset is what `orca-box-update` fetches, so a tagged
-# release is what users get; the `main` branch stays the moving target.
+# Tag a version (v1.2.3) to publish a release. The release carries a
+# self-contained executable for each platform, plus its checksums.
+#
+# Users install from the latest release, so a tagged release is what they
+# get; the main branch stays the moving target.
 on:
   push:
     tags: ['v*']
@@ -17,32 +19,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build orca.sh
-        run: ./build.sh
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
-      - name: Check the committed orca.sh matches the sources
-        run: |
-          if ! git diff --quiet -- orca.sh; then
-            echo "orca.sh is out of date; run ./build.sh and commit it" >&2
-            git diff -- orca.sh >&2
-            exit 1
-          fi
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
-      - name: Lint
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
-          shellcheck -S warning orca.sh
+      - name: Typecheck
+        run: bun x tsc --noEmit
 
       - name: Test
-        run: tests/run.sh
+        run: bun test
+
+      - name: Build every platform
+        run: ./build.sh --all
+
+      - name: Check the version matches the tag
+        run: |
+          version="$(cat VERSION)"
+          if [ "${GITHUB_REF_NAME}" != "v$version" ]; then
+            echo "VERSION is $version but the tag is ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
 
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version="${GITHUB_REF_NAME}"
-          gh release create "$version" \
-            --title "$version" \
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
             --generate-notes \
-            orca.sh
+            dist/orca-box-linux-x64 \
+            dist/orca-box-linux-arm64 \
+            dist/SHA256SUMS \
+            install.sh

@@ -5,29 +5,25 @@ and [pi](https://github.com/earendil-works/pi-coding-agent) from
 [Orca](https://orca.dev) inside a separate container per workspace, so agents
 run without permission prompts and without reaching the rest of your machine.
 
-This repository holds the source. The single file at the root — [`orca.sh`](orca.sh) —
-is what people download and run; it is **generated** from `src/` by
-[`build.sh`](build.sh), so the two can never drift apart.
-
 ## Install
 
 ```sh
-# Download, review, then run.
-curl -fsSLO https://raw.githubusercontent.com/ggpwnkthx/orca-box/main/orca.sh
-less orca.sh
-bash orca.sh --git=rw --yolo
+curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/install.sh | bash
 ```
 
-Or in one line:
+That installs everything **into your own account**: the program in
+`~/.local/share/orca-box`, the commands in `~/.local/bin`, the settings in
+`~/.config/orca-box`, the Orca app in `~/AppImages`. Nothing is written
+outside your home directory and nothing needs `sudo`.
+
+If [Bun](https://bun.sh) isn't installed yet, the installer puts it in
+`~/.bun` — also yours alone. If you'd rather install it yourself first:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ggpwnkthx/orca-box/main/orca.sh | bash
+curl -fsSL https://bun.sh/install | bash   # into ~/.bun
 ```
 
-Run it as your normal user, not with `sudo`. Orca has to be running for its
-agent settings to change; the installer starts it for you if it isn't.
-
-Options (all optional; `bash orca.sh --help` for the full list):
+### Options
 
 | Option | What it does |
 | --- | --- |
@@ -36,10 +32,20 @@ Options (all optional; `bash orca.sh --help` for the full list):
 | `--gh-auth` | give agents your GitHub credentials, read-only |
 | `--no-orca-app` | don't download or update the Orca app |
 
+`orca-box-setup --help` has the full list.
+
 ## What gets installed
 
-The installer copies `orca.sh` to `~/.local/share/orca-box/orca.sh` and links
-one command per tool into `~/.local/bin`. Each acts on the name it is called by:
+| Where | What |
+| --- | --- |
+| `~/.local/share/orca-box/` | the program and its data |
+| `~/.local/bin/` | the `orca-box` commands (links into the above) |
+| `~/.config/orca-box/` | the settings |
+| `~/.local/share/applications/` | the Orca menu entry |
+| `~/AppImages/` | the Orca app itself |
+| `~/.config/systemd/user/` | the daily update timer, if you enable it |
+
+Each command acts on the name it is called by:
 
 | Command | What it does |
 | --- | --- |
@@ -48,14 +54,13 @@ one command per tool into `~/.local/bin`. Each acts on the name it is called by:
 | `orca-box-archive [--all]` | remove boxes now instead of waiting for idle |
 | `orca-box-configure-orca` | point Orca's agents at `orca-box` (or `--unset`) |
 | `orca-box-install-orca` | install/update the Orca app + menu entry |
-| `orca-box-update` | update `orca-box` from this repository |
+| `orca-box-update` | update `orca-box` from the latest release |
 | `orca-box-setup` | the installer itself |
 
 ## How it works
 
 Each Orca workspace gets its own container, built from
-[`src/container/Containerfile`](src/container/Containerfile). The container
-sees:
+[`container/Containerfile`](container/Containerfile). The container sees:
 
 - the worktree, read-write, at the same path as on the host
 - the repo's shared `.git` directory, **read-only by default**; with
@@ -90,50 +95,54 @@ over the file; the file wins over the defaults.
 ## Repository layout
 
 ```
-orca.sh                  the generated single file (what people run)
-build.sh                 assembles orca.sh from src/
+install.sh              the bootstrapper: puts Bun in ~/.bun if needed,
+                         installs the program, runs the installer
+build.sh                builds the self-contained executable into dist/
 src/
-  header.sh              the file's header comment
-  globals.sh             paths and globals
-  dispatch.sh            name -> command
+  main.ts               the command line: dispatch by the name invoked
   lib/
-    common.sh            config, output, downloads, engine detection
-    box.sh               the box itself, plus archive and login
-    configure-orca.sh    talks to Orca's local socket
-    install-orca.sh      the Orca AppImage and its menu entry
-    update.sh            self-update
-    setup.sh             the installer
-  python/                the helper programs Orca's socket and releases need
-  container/             the Containerfile and the skill-sync script
-tests/                   the test suite
+    box.ts              the box: mounts, locking, creation, exec
+    config.ts           ~/.config/orca-box/config
+    engine.ts           Podman or Docker
+    orca.ts             talks to Orca over its private local socket
+    appimage.ts         the Orca app and its menu entry
+    setup.ts            the installer
+    update.ts           self-update
+    invoke.ts           which command was invoked
+    output.ts           say / warn / die
+  assets/
+    skill-sync.ts       embeds the Containerfile and the skill-sync script
+container/              the Containerfile and the skill-sync script
+tests/                  the test suite
 ```
 
 ### Editing
 
-`orca.sh` is generated — **edit `src/`, not `orca.sh`**. After changing
-anything:
+The program is **TypeScript, running on Bun**. Edit `src/`, then:
 
 ```sh
-./build.sh          # regenerate orca.sh
-./build.sh --check  # verify it is up to date (CI does this)
+bun install        # once
+bun test           # the test suite
+bun x tsc --noEmit # typecheck
+./build.sh         # build the executable into dist/
 ```
 
-The Python helpers in `src/python/` are referenced from the shell by an
-`@@FILE:path@@` marker; `build.sh` expands each marker back into the file's
-contents, so the shipped file stays self-contained and can still be piped to
-`bash`.
+The build produces a **single self-contained executable**: the Containerfile
+and the skill-sync script are embedded at compile time, so installing it is
+one file in your own space, with nothing else to install alongside it.
 
 ## Development
 
 ```sh
-./build.sh            # rebuild orca.sh
-./build.sh --check    # check it is up to date
-shellcheck orca.sh    # lint the built file
-tests/run.sh          # run the test suite
+bun install
+bun test           # 21 tests; they need no Podman, Docker or Orca
+bun x tsc --noEmit # typecheck
+./build.sh         # build for this machine
+./build.sh --all   # build for every released platform
 ```
 
 The tests use a mock container engine and a mock Orca daemon, so they need
-neither Podman nor Orca installed.
+neither Podman nor Docker nor Orca installed.
 
 ## License
 

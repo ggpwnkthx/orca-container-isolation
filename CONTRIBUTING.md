@@ -4,72 +4,58 @@ Thanks for helping out.
 
 ## The one rule
 
-**`orca.sh` is generated. Do not edit it.**
+**The program is TypeScript, in `src/`. Edit it there.**
 
-It is assembled from `src/` by `build.sh`. If you change the sources, run
-`./build.sh` and commit the result:
+`build.sh` compiles `src/` into a single self-contained executable in
+`dist/`. The release workflow attaches that executable to the GitHub
+Release, so there is nothing to hand-edit outside `src/`.
 
 ```sh
+bun install        # once
+bun test
+bun x tsc --noEmit
 ./build.sh
-git add orca.sh
-git commit
 ```
-
-CI runs `./build.sh --check`, which fails if the committed `orca.sh` does not
-match the sources. That check is what keeps the two in step.
 
 ## Getting set up
 
-You need bash, python3 and (optionally) shellcheck.
+You need [Bun](https://bun.sh) and git. Bun goes in your own space:
 
 ```sh
-git clone https://github.com/ggpwnkthx/orca-box
-cd orca-box
-./build.sh
-tests/run.sh
+curl -fsSL https://bun.sh/install | bash   # into ~/.bun
 ```
 
-The tests use a fake container engine, a fake curl and a fake Orca daemon, so
-they need neither Podman nor Docker nor Orca.
+Nothing in this project installs anything system-wide, and nothing needs
+`sudo`.
 
 ## Where things live
 
 | Path | What's in it |
 | --- | --- |
-| `src/header.sh` | the file's header comment |
-| `src/globals.sh` | paths, the tool list, the version |
-| `src/dispatch.sh` | maps a command name to its function |
-| `src/lib/common.sh` | config, output, downloads, engine detection |
-| `src/lib/box.sh` | the box itself, plus archive and login |
-| `src/lib/configure-orca.sh` | talks to Orca over its local socket |
-| `src/lib/install-orca.sh` | the Orca AppImage and its menu entry |
-| `src/lib/update.sh` | self-update |
-| `src/lib/setup.sh` | the installer |
-| `src/python/` | the helper programs (real `.py` files) |
-| `src/container/` | the Containerfile and the skill-sync script |
+| `src/main.ts` | the command line: dispatch by the name invoked |
+| `src/lib/box.ts` | the box: mounts, locking, creation, exec |
+| `src/lib/config.ts` | `~/.config/orca-box/config` |
+| `src/lib/engine.ts` | Podman or Docker |
+| `src/lib/orca.ts` | talks to Orca over its private local socket |
+| `src/lib/appimage.ts` | the Orca app and its menu entry |
+| `src/lib/setup.ts` | the installer |
+| `src/lib/update.ts` | self-update |
+| `src/lib/invoke.ts` | which command was invoked |
+| `src/lib/output.ts` | `say` / `warn` / `die` |
+| `src/assets/skill-sync.ts` | embeds the two files below |
+| `container/Containerfile` | the agent image |
+| `container/skill-sync.sh` | links the host's skills into a running box |
+| `install.sh` | the bootstrapper people run |
+| `build.sh` | builds the executable |
 
-The shell modules are concatenated in the order `build.sh` lists. Keep each
-one self-contained: it should not depend on a function defined in a module
-that comes later.
-
-## The embedded assets
-
-The Python helpers, the Containerfile and the skill-sync script live in their
-own files and are pulled into the shell by an `@@FILE:path@@` marker:
-
-```bash
-exec python3 -I - "$action" ... <<'PY'
-@@FILE:src/python/orca_client.py@@
-PY
-```
-
-`build.sh` replaces each marker with the file's contents, so the shipped
-`orca.sh` is self-contained and can still be piped to `bash`. Edit the file
-under `src/`, never the heredoc in the shell.
+The two files in `container/` are embedded into the executable at build
+time, so the installed program is a single file with nothing else to
+install alongside it.
 
 ## Style
 
-- `shellcheck -S warning` must be clean, for `orca.sh` and for every source.
+- `bun x tsc --noEmit` must be clean.
+- `bun test` must pass.
 - Prefer one function per concern; keep them short.
 - Comment the *why*, not the *what*.
 - User-facing text goes to stdout; diagnostics go to stderr.
@@ -78,15 +64,16 @@ under `src/`, never the heredoc in the shell.
 
 ```sh
 # bump VERSION, then:
-./build.sh
+./build.sh --all
 git commit -am "v1.2.3"
 git tag v1.2.3
 git push --follow-tags
 ```
 
-The release workflow builds, lints, tests and attaches `orca.sh` to the
-GitHub Release. `orca-box-update` fetches the latest release, so a tagged
-release is what users get; `main` stays the moving target.
+The release workflow typechecks, tests, builds every platform and attaches
+the executables and their checksums to the GitHub Release. `orca-box-update`
+fetches the latest release, so a tagged release is what users get; `main`
+stays the moving target.
 
 ## Reporting a bug
 
