@@ -7,6 +7,12 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.2]
+
+### Changed
+- The README and CONTRIBUTING describe macOS, Windows and the
+  program that installs itself.
+
 ## [1.7.1]
 
 ### Added

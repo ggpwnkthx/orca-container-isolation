@@ -102,23 +102,30 @@ to the running Orca app over its private local socket, the way Orca's own
 \`orca\` CLI does, so Orca applies and saves the change itself. Orca must be
 running; nothing is written to Orca's files directly.
 `,
-  "orca-box-install-orca": `orca-box-install-orca — install or update the Orca app (AppImage) and add it
+  "orca-box-install-orca": `orca-box-install-orca — install or update the Orca app and add it
 to your application menu.
 
   orca-box-install-orca              download the latest release from
                                      github.com/stablyai/orca, verify it,
                                      install it and add the menu entry
-  orca-box-install-orca --from FILE  install an AppImage you downloaded
+  orca-box-install-orca --from FILE  install an app file you downloaded
                                      yourself (e.g. from orca.dev)
   orca-box-install-orca --remove     remove the installed app and menu entry
-                                     (keeps Orca's settings in ~/.config/orca)
+                                     (keeps Orca's settings)
 
-Installs to ~/AppImages/orca.AppImage (Gear Lever's default folder; change
-with ORCA_APPIMAGE_DIR). The file stays writable by you so Orca's built-in
-updater can keep updating it in place.
+On Linux the app is an AppImage: it goes to ~/AppImages/orca.AppImage
+(Gear Lever's default folder; change with ORCA_APPIMAGE_DIR). The file stays
+writable by you so Orca's built-in updater can keep updating it in place.
+
+On macOS the app is a bundle: the disk image from the release is mounted and
+Orca.app is copied to ~/Applications (change with ORCA_APP_DIR). The bundle
+is the application-menu entry, so there is no separate menu file.
+
+On Windows the app is an installer: orca-windows-setup.exe is downloaded,
+checked and then run, and you finish the wizard it opens.
 
 The download is checked against the SHA-256 digest GitHub publishes for the
-file, or else the SHA-512 in the release's latest-linux.yml (what Orca's own
+file, or else the SHA-512 in the release's checksum file (what Orca's own
 updater uses). With neither available it refuses, unless
 ORCA_BOX_ALLOW_UNVERIFIED=1.
 `,
@@ -135,8 +142,9 @@ to use another copy).
                               update right away (stops agents running in them);
                               otherwise they switch once they go idle
   orca-box-update --enable-auto   check for and install orca-box updates daily
-  orca-box-update --disable-auto  (a systemd user timer; script updates only,
-                                  never restarts boxes or rebuilds the image)
+  orca-box-update --disable-auto  (a systemd user timer on Linux, a launchd
+                                  agent on macOS; script updates only, never
+                                  restarts boxes or rebuilds the image)
   --quiet                     print only when something changed
 
 The download must be a valid orca-box program before it's used; the new
@@ -166,16 +174,18 @@ Options:
                       anyone in a box can read the token. Saved in
                       ~/.config/orca-box/config
   --no-orca-app       don't download/update the Orca app or its menu entry
-  --orca-from FILE    install Orca from an AppImage you downloaded yourself
+  --orca-from FILE    install Orca from an app file you downloaded yourself
   --no-launch         don't start Orca to apply its settings
   --no-orca           don't change Orca's settings
   --no-build          don't build the agent image
 
 Orca goes to ~/AppImages/orca.AppImage (ORCA_APPIMAGE_DIR to change) with an
-application-menu entry. Orca must be running to change its settings; if it
-isn't, the installer starts it (unless --no-launch).
+application-menu entry, or to ~/Applications/Orca.app (ORCA_APP_DIR) on
+macOS. Orca must be running to change its settings; if it isn't, the
+installer starts it (unless --no-launch).
 
-Environment: PREFIX (default ~/.local) — scripts go to $PREFIX/bin.
+Environment: PREFIX (default ~/.local, %LOCALAPPDATA%\orca-box on Windows)
+             — the commands go to $PREFIX/bin.
              ORCA_BOX_ENGINE=podman|docker to override auto-detection.
 `,
 };

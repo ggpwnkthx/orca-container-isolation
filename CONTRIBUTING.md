@@ -38,14 +38,13 @@ Nothing in this project installs anything system-wide, and nothing needs
 | `src/lib/engine.ts` | Podman or Docker |
 | `src/lib/orca.ts` | talks to Orca over its private local socket |
 | `src/lib/appimage.ts` | the Orca app and its menu entry |
-| `src/lib/setup.ts` | the installer |
+| `src/lib/setup.ts` | the setup: installs the program and configures Orca |
 | `src/lib/update.ts` | self-update |
 | `src/lib/invoke.ts` | which command was invoked |
 | `src/lib/output.ts` | `say` / `warn` / `die` |
 | `src/assets/skill-sync.ts` | embeds the two files below |
 | `container/Containerfile` | the agent image |
 | `container/skill-sync.sh` | links the host's skills into a running box |
-| `install.sh` | the bootstrapper people run |
 | `build.sh` | builds the executable |
 
 The two files in `container/` are embedded into the executable at build
@@ -71,9 +70,11 @@ git push --follow-tags
 ```
 
 The release workflow typechecks, tests, builds every platform and attaches
-the executables and their checksums to the GitHub Release. `orca-box-update`
-fetches the latest release, so a tagged release is what users get; `main`
-stays the moving target.
+the executables and their checksums to the GitHub Release. People install
+by downloading the executable for their machine and running it; there is
+no bootstrapper script. `orca-box-update` fetches the latest release and
+checks it against the published checksum, so a tagged release is what users
+get; `main` stays the moving target.
 
 ## Reporting a bug
 

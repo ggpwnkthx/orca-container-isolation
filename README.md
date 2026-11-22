@@ -7,21 +7,67 @@ run without permission prompts and without reaching the rest of your machine.
 
 ## Install
 
+Download the program for your machine from the
+[releases page](https://github.com/ggpwnkthx/orca-box/releases/latest) and
+run it. There is one file, and it needs nothing else:
+
+| Platform | File |
+| --- | --- |
+| Linux (x64, glibc) | `orca-box-linux-x64` |
+| Linux (x64, musl — Alpine) | `orca-box-linux-x64-musl` |
+| Linux (arm64, glibc) | `orca-box-linux-arm64` |
+| Linux (arm64, musl) | `orca-box-linux-arm64-musl` |
+| macOS (Apple silicon) | `orca-box-darwin-arm64` |
+| macOS (Intel) | `orca-box-darwin-x64` |
+| Windows | `orca-box-windows-x64.exe` |
+
 ```sh
-curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/install.sh | bash
+chmod +x orca-box-linux-x64     # Linux and macOS
+./orca-box-linux-x64
 ```
 
-That installs everything **into your own account**: the program in
-`~/.local/share/orca-box`, the commands in `~/.local/bin`, the settings in
-`~/.config/orca-box`, the Orca app in `~/AppImages`. Nothing is written
-outside your home directory and nothing needs `sudo`.
+On Windows, run `orca-box-windows-x64.exe`; it asks nothing and needs no
+administrator rights.
 
-If [Bun](https://bun.sh) isn't installed yet, the installer puts it in
-`~/.bun` — also yours alone. If you'd rather install it yourself first:
+Running it like that sets everything up. It installs **into your own
+account**: the program copies itself to `~/.local/share/orca-box`, the
+commands go to `~/.local/bin`, the settings to `~/.config/orca-box`, and
+the Orca app to `~/AppImages` (Linux) or `~/Applications` (macOS). Nothing
+is written outside your home directory and nothing needs `sudo`.
+
+It then builds the agent image, installs the Orca app and points Orca's
+Claude Code, Codex and pi agents at orca-box, so that launching them from
+Orca runs them in a box.
+
+### The first run
+
+The file you download is not the program you keep: it installs *itself*
+and then it is the program you keep, with the commands beside it. So:
+
+| You run | What happens |
+| --- | --- |
+| the downloaded file, with no arguments | it installs itself and sets everything up |
+| the downloaded file, with an agent (`… claude`) | it sets itself up, then runs the agent |
+| a command (`orca-box`, `orca-box-archive`, …) | that command, as usual |
+
+Which command a name means is a question about the name; whether the
+program is set up yet is a question about the program, and the program
+answers it by looking at where it is installed.
+
+To check the download, compare it with the checksum in the release:
 
 ```sh
-curl -fsSL https://bun.sh/install | bash   # into ~/.bun
+sha256sum orca-box-linux-x64     # or: shasum -a 256 orca-box-linux-x64
 ```
+
+On macOS, `~/.local/bin` isn't on your PATH by default, so add it once:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+On Windows the commands go to `%LOCALAPPDATA%\orca-box\bin`, and the
+setup adds that folder to your PATH for you.
 
 ### Options
 
@@ -41,9 +87,14 @@ curl -fsSL https://bun.sh/install | bash   # into ~/.bun
 | `~/.local/share/orca-box/` | the program and its data |
 | `~/.local/bin/` | the `orca-box` commands (links into the above) |
 | `~/.config/orca-box/` | the settings |
-| `~/.local/share/applications/` | the Orca menu entry |
-| `~/AppImages/` | the Orca app itself |
-| `~/.config/systemd/user/` | the daily update timer, if you enable it |
+| `~/AppImages/` | the Orca app itself (Linux) |
+| `~/Applications/Orca.app` | the Orca app itself (macOS) |
+| `~/.local/share/applications/` | the Orca menu entry (Linux) |
+| `~/.config/systemd/user/` | the daily update timer, if you enable it (Linux) |
+| `~/Library/LaunchAgents/` | the daily update agent, if you enable it (macOS) |
+| `%LOCALAPPDATA%\orca-box\` | the program and its data (Windows) |
+| `%LOCALAPPDATA%\orca-box\bin\` | the `orca-box` commands (Windows) |
+| `%APPDATA%\orca-box\` | the settings (Windows) |
 
 Each command acts on the name it is called by:
 
@@ -80,13 +131,14 @@ The host needs very little:
 | --- | --- | --- |
 | `git` | finding the worktree | the installer says so |
 | Podman **or** Docker | running the boxes | the installer says so |
-| `flock` | one launch per workspace | boxes still work, but two can start at once |
+| `flock` (Linux) or `lockf` (macOS) | one launch per workspace | boxes still work, but two can start at once |
 
-Everything else is optional and checked where it's used: `curl`,
-`systemctl` (for the daily update timer), `update-desktop-database` and
-`desktop-file-validate` (for the menu entry), `newuidmap` and a
-`/etc/subuid` range (for rootless Podman). None of them are needed to
-*install* orca-box, and missing ones are reported, never fatal.
+Nothing else is needed: the program brings its own runtime, and it does
+its own downloading. Everything else is optional and checked where it is
+used: `systemctl` (for the daily update timer on Linux),
+`update-desktop-database` and `desktop-file-validate` (for the menu entry),
+`newuidmap` and a `/etc/subuid` range (for rootless Podman). Missing ones
+are reported, never fatal.
 
 Two things differ by distribution, and both are handled:
 
@@ -103,6 +155,65 @@ add it:
 ```sh
 sudo usermod --add-subuids $(id -u)-65536 --add-subgids $(id -g)-65536 $(id -un)
 ```
+
+### On macOS
+
+macOS has no AppImage, no systemd and no `/proc`, so a few things work
+differently:
+
+- **The Orca app** is a bundle. The disk image from the Orca release is
+  mounted with `hdiutil` and `Orca.app` is copied to `~/Applications`
+  (`ORCA_APP_DIR` to change that). The bundle *is* the application-menu
+  entry, so there is no `.desktop` file to write.
+- **The daily update** is a launchd agent in
+  `~/Library/LaunchAgents/dev.orca-box.update.plist`, instead of a systemd
+  timer.
+- **The lock** uses `lockf` instead of `flock`; if neither is there,
+  orca-box falls back to a lock file of its own.
+- **The command names** are read from `ps` instead of `/proc/self/cmdline`,
+  so the links in `~/.local/bin` still work.
+
+Docker Desktop is the usual engine on macOS. Two things to know:
+
+- The worktree has to be in a folder Docker Desktop shares with its virtual
+  machine: your home folder, `/Volumes`, `/private` or `/tmp`. orca-box says
+  so when it isn't.
+- Use Docker Desktop's **VirtioFS** file sharing (the default since 4.34).
+  With the older gRPC-FUSE sharing, the files in the box belong to root
+  rather than to you, and the agents can't write to the worktree.
+
+Podman works on macOS too, through `podman machine`; Docker Desktop is
+usually the smoother choice.
+
+### On Windows
+
+Windows is the odd one out: the containers are still Linux containers
+(Docker Desktop runs them in WSL2), but the host is not. A few things
+follow from that.
+
+- **Paths.** A Linux container cannot have a folder called `C:\Users\me`
+  in it, so the drive becomes a folder: `C:\Users\me\project` is mounted
+  at `/c/Users/me/project` in the box. The shape of the path is kept, so
+  it still reads like the path on the host.
+- **The commands.** Windows cannot run a program through a link without
+  extra privileges, so the commands are small `.cmd` files in
+  `%LOCALAPPDATA%\orca-box\bin` that call the program. They are meant
+  to be typed in a shell. Orca, which starts programs directly and
+  without a shell, is given the program itself with the name of the
+  command as its first argument:
+  `"C:\Users\me\AppData\Local\orca-box\orca-box.exe" claude`.
+- **The Orca app** is an installer (`orca-windows-setup.exe`), which is
+  downloaded, checked and then run: the user finishes the wizard. The
+  program it installs is found in `%LOCALAPPDATA%\Programs`.
+- **The daily update** is a task in the Task Scheduler, not a systemd
+  timer or a launchd agent.
+- **Git in the box.** The files Docker Desktop shares with the virtual
+  machine belong to root in the container, so git is told to trust the
+  directory (`safe.directory`); without that it refuses to work in the
+  repository.
+
+Docker Desktop shares the drives you tell it to (C: by default), so put
+your worktrees there.
 
 ## The container engine
 
@@ -123,12 +234,11 @@ over the file; the file wins over the defaults.
 | `ORCA_BOX_IMAGE` | `localhost/orca-agents:latest` | the agent image |
 | `ORCA_BOX_SKILLS` | `1` | `0` turns off the host-skill mounts |
 | `ORCA_BOX_GH_AUTH` | `0` | `1` gives agents your `gh` credentials |
+| `ORCA_BOX_NO_NEW_PRIVILEGES` | `1` | `0` drops `--security-opt no-new-privileges` (for engines that don't know it) |
 
 ## Repository layout
 
 ```
-install.sh              the bootstrapper: puts Bun in ~/.bun if needed,
-                         installs the program, runs the installer
 build.sh                builds the self-contained executable into dist/
 src/
   main.ts               the command line: dispatch by the name invoked
@@ -137,7 +247,14 @@ src/
     config.ts           ~/.config/orca-box/config
     engine.ts           Podman or Docker
     orca.ts             talks to Orca over its private local socket
-    appimage.ts         the Orca app and its menu entry
+    app.ts              the Orca app, on any platform
+    appimage.ts         the Orca app on Linux: the AppImage and its menu entry
+    macapp.ts           the Orca app on macOS: the disk image and the bundle
+    windowsapp.ts       the Orca app on Windows: the installer
+    hostpath.ts         where a host folder is seen inside the box
+    paths.ts            where orca-box puts its files
+    platform.ts         which platform are we on
+    release.ts          looking up the Orca release
     setup.ts            the installer
     update.ts           self-update
     invoke.ts           which command was invoked
@@ -160,15 +277,24 @@ bun x tsc --noEmit # typecheck
 ./build.sh         # build the executable into dist/
 ```
 
+On Windows, build it with Bun directly:
+
+```powershell
+bun build --compile --target bun-windows-x64 --outfile dist\orca-box-windows-x64.exe src\main.ts
+```
+
 The build produces a **single self-contained executable**: the Containerfile
 and the skill-sync script are embedded at compile time, so installing it is
 one file in your own space, with nothing else to install alongside it.
+
+`./build.sh --all` builds every released platform, from either Linux or
+macOS: Linux (glibc and musl, x64 and arm64) and macOS (x64 and arm64).
 
 ## Development
 
 ```sh
 bun install
-bun test           # 21 tests; they need no Podman, Docker or Orca
+bun test           # the test suite; it needs no Podman, Docker or Orca
 bun x tsc --noEmit # typecheck
 ./build.sh         # build for this machine
 ./build.sh --all   # build for every released platform
