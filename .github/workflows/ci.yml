@@ -23,26 +23,7 @@ jobs:
         run: bun x tsc --noEmit
 
       - name: Test
-        shell: bash
-        run: |
-          set +e
-          out="$(bun test --timeout 30000 2>&1)"
-          code=$?
-          echo "$out" | tail -40
-          if [ "$code" -ne 0 ]; then
-            # Put the failure in the annotations, so it can be read
-            # without the job's log.
-            summary="$(echo "$out" | grep -E '^\((fail|todo)\)|^ *[0-9]+ (pass|fail)|error:' | head -30)"
-            summary="${summary//$'\n'/%0A}"
-            echo "::error title=Test failure::${summary}"
-            tail="$(echo "$out" | tail -25)"
-            tail="${tail//$'\n'/%0A}"
-            echo "::error title=Test output::${tail}"
-            info="bun $(bun --version); git $(git --version); uname $(uname -a)"
-            info="${info//$'\n'/%0A}"
-            echo "::error title=Test environment::${info}"
-          fi
-          exit "$code"
+        run: bun test --timeout 30000
 
       - name: Build
         run: ./build.sh
@@ -99,26 +80,7 @@ jobs:
         run: bun x tsc --noEmit
 
       - name: Test
-        shell: bash
-        run: |
-          set +e
-          out="$(bun test --timeout 30000 2>&1)"
-          code=$?
-          echo "$out" | tail -40
-          if [ "$code" -ne 0 ]; then
-            # Put the failure in the annotations, so it can be read
-            # without the job's log.
-            summary="$(echo "$out" | grep -E '^\((fail|todo)\)|^ *[0-9]+ (pass|fail)|error:' | head -30)"
-            summary="${summary//$'\n'/%0A}"
-            echo "::error title=Test failure::${summary}"
-            tail="$(echo "$out" | tail -25)"
-            tail="${tail//$'\n'/%0A}"
-            echo "::error title=Test output::${tail}"
-            info="bun $(bun --version); git $(git --version); uname $(uname -a)"
-            info="${info//$'\n'/%0A}"
-            echo "::error title=Test environment::${info}"
-          fi
-          exit "$code"
+        run: bun test --timeout 30000
 
       - name: Build
         run: ./build.sh
@@ -157,26 +119,7 @@ jobs:
         run: bun x tsc --noEmit
 
       - name: Test
-        shell: bash
-        run: |
-          set +e
-          out="$(bun test --timeout 30000 2>&1)"
-          code=$?
-          echo "$out" | tail -40
-          if [ "$code" -ne 0 ]; then
-            # Put the failure in the annotations, so it can be read
-            # without the job's log.
-            summary="$(echo "$out" | grep -E '^\((fail|todo)\)|^ *[0-9]+ (pass|fail)|error:' | head -30)"
-            summary="${summary//$'\n'/%0A}"
-            echo "::error title=Test failure::${summary}"
-            tail="$(echo "$out" | tail -25)"
-            tail="${tail//$'\n'/%0A}"
-            echo "::error title=Test output::${tail}"
-            info="bun $(bun --version); git $(git --version); uname $(uname -a)"
-            info="${info//$'\n'/%0A}"
-            echo "::error title=Test environment::${info}"
-          fi
-          exit "$code"
+        run: bun test --timeout 30000
 
       - name: Build
         run: |

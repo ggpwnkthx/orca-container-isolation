@@ -7,6 +7,12 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.7]
+
+### Changed
+- The CI runs the tests with a longer timeout, so a slow machine
+  does not fail them.
+
 ## [1.7.6]
 
 ### Changed
