@@ -7,6 +7,12 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.6]
+
+### Changed
+- The tests follow git for the .git directory too, and for the
+  folders inside it, which are joined the way the system writes them.
+
 ## [1.7.5]
 
 ### Changed

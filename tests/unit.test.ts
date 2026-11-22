@@ -253,6 +253,21 @@ function worktreePath(): string {
   return (out || repo).replace(/\\/g, "/");
 }
 
+/**
+ * The .git directory, as the program sees it.
+ *
+ * Git gives this one too, with forward slashes; the folders inside it
+ * are then joined the way the system writes them.
+ */
+function gitCommonDir(): string {
+  const dir = Bun.spawnSync(
+    ["git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+    { stdout: "pipe", stderr: "ignore", stdin: "ignore" },
+  );
+  const out = new TextDecoder().decode(dir.stdout).trim();
+  return out || `${worktreePath()}/.git`;
+}
+
 /** Where the GitHub CLI keeps its credentials, as the program looks for them. */
 function ghDir(): string {
   if (isWindows()) return join(home, "AppData", "Roaming", "GitHub CLI");
@@ -261,7 +276,8 @@ function ghDir(): string {
 
 describe("running a box", () => {
   test("it runs the agent in the workspace's box", () => {
-    const { log } = run(["orca-box", "claude"]);
+    // The box is made here, so the log says which worktree it is for.
+    const { log } = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
     expect(log).toContain("PODMAN exec -i");
     expect(log).toContain(worktreePath());
   });
@@ -279,7 +295,7 @@ describe("running a box", () => {
 
   test("the .git directory is read-only by default", () => {
     const { log } = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
-    const gitDir = `${worktreePath()}/.git`;
+    const gitDir = gitCommonDir();
     expect(log).toContain(`-v ${gitDir}:${containerPath(gitDir)}:ro`);
   });
 
@@ -288,9 +304,10 @@ describe("running a box", () => {
       FAKE_EXISTING: "0",
       ORCA_BOX_GIT: "rw",
     });
-    const gitDir = `${worktreePath()}/.git`;
-    const hooks = `${gitDir}/hooks`;
-    const config = `${gitDir}/config`;
+    const gitDir = gitCommonDir();
+    // The folders inside .git are joined the way the system writes them.
+    const hooks = join(gitDir, "hooks");
+    const config = join(gitDir, "config");
     expect(log).toContain(`-v ${gitDir}:${containerPath(gitDir)}`);
     expect(log).toContain(`-v ${hooks}:${containerPath(hooks)}:ro`);
     expect(log).toContain(`-v ${config}:${containerPath(config)}:ro`);
