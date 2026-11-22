@@ -152,7 +152,7 @@ function commandWorks(bin: string, args: string[]): boolean {
 
 /** Record the engine in use, so later runs agree. */
 export function rememberEngine(): void {
-  Bun.spawnSync(["mkdir", "-p", CONFIG_FILE_DIR]);
+  mkdirSync(CONFIG_FILE_DIR, { recursive: true });
   writeFileSync(join(CONFIG_FILE_DIR, "engine"), `${engineMode()}\n`);
 }
 

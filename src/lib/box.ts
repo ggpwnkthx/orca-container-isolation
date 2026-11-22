@@ -80,16 +80,35 @@ export function resolveTarget(): Target {
   });
   if (top.exitCode === 0) {
     worktree = new TextDecoder().decode(top.stdout).trim();
+    // The absolute path of the shared .git directory. --path-format is
+    // git 2.31 and newer; older versions (some macOS installs) get the
+    // plain one, which is relative to the worktree.
     const dir = Bun.spawnSync(
       ["git", "-C", worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"],
       { stdout: "pipe", stderr: "ignore", stdin: "ignore" },
     );
     common = new TextDecoder().decode(dir.stdout).trim();
+    if (!common) {
+      const old = Bun.spawnSync(
+        ["git", "-C", worktree, "rev-parse", "--git-common-dir"],
+        { stdout: "pipe", stderr: "ignore", stdin: "ignore" },
+      );
+      const relative = new TextDecoder().decode(old.stdout).trim();
+      if (relative) {
+        common = isAbsolute(relative)
+          ? relative
+          : join(worktree, relative);
+      }
+    }
   } else {
+    // Not a repository: a folder under the home directory is given to the
+    // box as it is; a dotfolder in the home directory, and anything
+    // outside it, gets nothing.
     const resolved = realpathSync(here);
-    if (resolved === homeReal || resolved.startsWith(`${homeReal}/.`)) {
+    const separator = resolved.includes("\\") ? "\\" : "/";
+    if (resolved === homeReal || resolved.startsWith(`${homeReal}${separator}.`)) {
       worktree = "";
-    } else if (resolved.startsWith(`${homeReal}/`)) {
+    } else if (resolved.startsWith(`${homeReal}${separator}`)) {
       worktree = here;
     } else {
       worktree = "";
@@ -381,9 +400,12 @@ export class BoxLock {
    * Returns true if the lock was taken, false if we timed out.
    */
   async acquire(timeout: number): Promise<boolean> {
+    const helper = lockHelper(timeout, this.file);
+    if (!helper) return this.acquireWithFile(timeout);
+
     // The helper holds the lock for as long as its stdin stays open.
     const proc = Bun.spawn(
-      ["flock", "-x", "-w", String(timeout), this.file, "-c", "echo READY; cat > /dev/null"],
+      [...helper.bin, ...helper.args],
       { stdin: "pipe", stdout: "pipe", stderr: "ignore" },
     );
     const reader = proc.stdout.getReader();
@@ -403,9 +425,55 @@ export class BoxLock {
     return true;
   }
 
+  /**
+   * Take the lock with a lock file of our own.
+   *
+   * Used where the system has neither flock nor lockf. The file is
+   * created exclusively, so only one process can win; a lock left behind
+   * by a process that died is taken over.
+   */
+  private async acquireWithFile(timeout: number): Promise<boolean> {
+    const deadline = Date.now() + timeout * 1000;
+    while (Date.now() < deadline) {
+      try {
+        const fd = openSync(this.file, "wx");
+        writeFileSync(fd, `${process.pid}\n`);
+        closeSync(fd);
+        this.ownFile = true;
+        return true;
+      } catch {
+        // Someone else has it: is that process still alive?
+        if (!lockIsHeld(this.file)) {
+          // Stale: the process that made it is gone. Take it over.
+          try {
+            unlinkSync(this.file);
+          } catch {
+            // Gone already.
+          }
+          continue;
+        }
+        await Bun.sleep(200);
+      }
+    }
+    return false;
+  }
+
+  private ownFile = false;
+
   release(): void {
+    if (this.ownFile) {
+      try {
+        unlinkSync(this.file);
+      } catch {
+        // Already gone.
+      }
+      this.ownFile = false;
+      this.proc = null;
+      this.writer = null;
+      return;
+    }
     if (!this.writer || !this.proc) return;
-    // Closing stdin ends the helper's `cat`, which ends the flock.
+    // Closing stdin ends the helper's `cat`, which ends the lock.
     try {
       this.writer.end();
     } catch {
@@ -775,29 +843,60 @@ export function archive(all: boolean): void {
 /** Open a shell in the box, to sign in to the agents. */
 export async function login(args: string[]): Promise<void> {
   prepareHome();
+  const common = [
+    engineBinary(),
+    "run",
+    "--rm",
+    ...userArgs(),
+    "--cap-drop=all",
+    ...securityArgs(),
+    "-v",
+    `${setting("ORCA_BOX_HOME_VOLUME")}:/home/node`,
+    "-e",
+    "HOME=/home/node",
+    "-w",
+    "/home/node",
+    "-e",
+    `TERM=${process.env.TERM ?? "xterm-256color"}`,
+    setting("ORCA_BOX_IMAGE"),
+  ];
+
+  // The host network lets a browser login call back to localhost (Codex
+  // listens on port 1455). Some engines don't have it -- Docker Desktop
+  // on macOS only with its host-networking option turned on -- so the
+  // login box falls back to the ordinary network.
+  let code = await runLogin(common, ["--network=host"], args);
+  if (code === null) {
+    plain("This engine doesn't have the host network; logging in without it.");
+    plain("    A browser login that calls back to localhost may not finish.");
+    code = await runLogin(common, [], args);
+  }
+  process.exit(code ?? 0);
+}
+
+/**
+ * Run the login container.
+ *
+ * Returns the container's exit status, or null when the engine refused
+ * the container itself (a flag it doesn't know), so the caller can try
+ * again without the host network.
+ */
+async function runLogin(
+  common: string[],
+  extra: string[],
+  args: string[],
+): Promise<number | null> {
   const proc = Bun.spawn(
     [
-      engineBinary(),
-      "run",
-      "--rm",
+      ...common,
+      ...extra,
       "-it",
-      "--network=host",
-      ...userArgs(),
-      "--cap-drop=all",
-      "--security-opt",
-      "no-new-privileges",
-      "-v",
-      `${setting("ORCA_BOX_HOME_VOLUME")}:/home/node`,
-      "-e",
-      "HOME=/home/node",
-      "-w",
-      "/home/node",
-      "-e",
-      `TERM=${process.env.TERM ?? "xterm-256color"}`,
-      setting("ORCA_BOX_IMAGE"),
       ...(args.length ? args : ["bash"]),
     ],
     { stdout: "inherit", stderr: "inherit", stdin: "inherit" },
   );
-  process.exit(await proc.exited);
+  const code = await proc.exited;
+  // 125 is what the Docker CLI returns when it refuses a flag.
+  if (code === 125) return null;
+  return code;
 }

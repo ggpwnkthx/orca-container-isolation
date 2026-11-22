@@ -7,6 +7,16 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.6.1]
+
+### Fixed
+- The worktree is found with older versions of git too (before 2.31,
+  which introduced `--path-format`).
+- The program no longer shells out to `rm`, `mv` and `cp`, which
+  Windows doesn't have.
+- The login box falls back to the ordinary network when the engine
+  has no host network (Docker Desktop on macOS, unless it is turned on).
+
 ## [1.6.0]
 
 ### Added
