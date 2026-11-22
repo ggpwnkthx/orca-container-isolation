@@ -7,6 +7,13 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.1]
+
+### Added
+- Tests for the command resolution, the platform helpers, the macOS
+  and Windows paths, and a mock container engine that is a program, so
+  the tests run on Windows too.
+
 ## [1.7.0]
 
 ### Added

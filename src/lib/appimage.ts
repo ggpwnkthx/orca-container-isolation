@@ -25,7 +25,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { dataHome } from "./platform.ts";
 import { dataWork } from "./paths.ts";
-import { releaseInfo as releaseInfoFor } from "./release.ts";
+import { releaseInfo } from "./release.ts";
 import { die, say, warn } from "./output.ts";
 import { hasCommand } from "./which.ts";
 
@@ -162,8 +162,8 @@ export async function installAppImage(from: string): Promise<void> {
         "couldn't reach GitHub's API. Download Orca from https://orca.dev and run: orca-box-install-orca --from FILE",
       );
     }
-    const info = await releaseInfoFor(
-      release as Parameters<typeof releaseInfoFor>[0],
+    const info = await releaseInfo(
+      release as Parameters<typeof releaseInfo>[0],
       assetNames(),
     );
     version = info.version;
@@ -499,13 +499,3 @@ export function installFallbackIcon(root: string): boolean {
   copyFileSync(dirIcon, join(dest, `${DESKTOP_ID}.png`));
   return true;
 }
-
-// The names the rest of the program used before the app moved into modules
-// of their own; they go when the last caller moves over.
-export async function releaseInfo(release: {
-  tag_name?: string;
-  assets?: { name?: string; browser_download_url?: string; digest?: string }[];
-}): Promise<{ version: string; url: string; sha256: string; ymlUrl: string }> {
-  return releaseInfoFor(release, assetNames());
-}
-export const removeApp = removeAppImage;

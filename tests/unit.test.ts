@@ -8,25 +8,37 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, symlinkSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, symlinkSync, chmodSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { sha512FromYml, releaseInfo, assetNames } from "../src/lib/appimage.ts";
-import { invokeName, invokeNameFrom } from "../src/lib/invoke.ts";
+import { sha512FromYml } from "../src/lib/appimage.ts";
+import { assetNames } from "../src/lib/app.ts";
+import { releaseInfo } from "../src/lib/release.ts";
+import { invokeName, invokeNameFrom, psCmdlineName } from "../src/lib/invoke.ts";
 import { hasCommand } from "../src/lib/which.ts";
 import { hasSubidRange } from "../src/lib/setup.ts";
+import { BoxLock } from "../src/lib/box.ts";
+import { macAssetNames } from "../src/lib/macapp.ts";
+import { isMac, programAsset, programAssetUrl } from "../src/lib/platform.ts";
 
-const MOCKS = join(import.meta.dir, "..", "tests", "mocks");
+const MOCKS = join(import.meta.dir, "mocks");
 
 let work: string;
 let home: string;
 let repo: string;
+let bin: string;
 
 beforeAll(() => {
   work = mkdtempSync(join(tmpdir(), "orca-box-test-"));
   home = join(work, "home");
   repo = join(work, "repo");
+  bin = join(work, "bin");
+  mkdirSync(bin, { recursive: true });
+  // The mock engine is a program, so that it can be started the same way
+  // on every platform: a .cmd file cannot be started without a shell.
+  buildMock("podman", join(bin, mockName("podman")));
+  buildMock("curl", join(bin, mockName("curl")));
   mkdirSync(join(home, ".agents", "skills", "demo"), { recursive: true });
   mkdirSync(join(home, ".claude", "skills"), { recursive: true });
   mkdirSync(join(home, ".config", "gh"), { recursive: true });
@@ -41,6 +53,44 @@ beforeAll(() => {
 afterAll(() => {
   rmSync(work, { recursive: true, force: true });
 });
+
+/** The name an executable has on this platform. */
+function mockName(name: string): string {
+  return process.platform === "win32" ? `${name}.exe` : name;
+}
+
+/**
+ * Put a built program where the setup would put it.
+ *
+ * The program only behaves like the tool once it is installed: a copy
+ * that is not installed sets itself up first.
+ */
+function installProgram(source: string): string {
+  const dir = join(home, ".local", "share", "orca-box");
+  mkdirSync(dir, { recursive: true });
+  const dest = join(dir, "orca-box");
+  copyFileSync(source, dest);
+  chmodSync(dest, 0o755);
+  return dest;
+}
+
+/** Build one of the mock programs into an executable. */
+function buildMock(name: string, out: string): void {
+  const built = Bun.spawnSync(
+    [
+      process.execPath,
+      "build",
+      "--compile",
+      "--outfile",
+      out,
+      join(MOCKS, `${name}.ts`),
+    ],
+    { stdout: "ignore", stderr: "inherit" },
+  );
+  if (built.exitCode !== 0) {
+    throw new Error(`couldn't build the ${name} mock`);
+  }
+}
 
 /** Run the program with the mock engine, capturing the engine's log. */
 function run(args: string[], env: Record<string, string> = {}): {
@@ -57,7 +107,11 @@ function run(args: string[], env: Record<string, string> = {}): {
       env: {
         ...process.env,
         HOME: home,
-        PATH: `${MOCKS}:${process.env.PATH ?? ""}`,
+        // Windows asks for the home folder under another name.
+        USERPROFILE: home,
+        HOMEDRIVE: "",
+        HOMEPATH: "",
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
         FAKE_LOG: log,
         ...env,
       },
@@ -109,17 +163,20 @@ describe("the agent image", () => {
 
 describe("the release lookup", () => {
   test("it reads the tag, URL and digest", async () => {
-    const info = await releaseInfo({
-      tag_name: "v1.2.3",
-      assets: [
-        {
-          name: "orca-linux.AppImage",
-          browser_download_url: "https://example/orca-linux.AppImage",
-          digest: "sha256:abc123",
-        },
-        { name: "latest-linux.yml", browser_download_url: "https://example/latest-linux.yml" },
-      ],
-    });
+    const info = await releaseInfo(
+      {
+        tag_name: "v1.2.3",
+        assets: [
+          {
+            name: "orca-linux.AppImage",
+            browser_download_url: "https://example/orca-linux.AppImage",
+            digest: "sha256:abc123",
+          },
+          { name: "latest-linux.yml", browser_download_url: "https://example/latest-linux.yml" },
+        ],
+      },
+      { asset: "orca-linux.AppImage", yml: "latest-linux.yml" },
+    );
     expect(info.version).toBe("v1.2.3");
     expect(info.url).toBe("https://example/orca-linux.AppImage");
     expect(info.sha256).toBe("abc123");
@@ -127,10 +184,13 @@ describe("the release lookup", () => {
   });
 
   test("it copes with a release that publishes no digest", async () => {
-    const info = await releaseInfo({
-      tag_name: "v1.0.0",
-      assets: [{ name: "orca-linux.AppImage", browser_download_url: "https://example/a" }],
-    });
+    const info = await releaseInfo(
+      {
+        tag_name: "v1.0.0",
+        assets: [{ name: "orca-linux.AppImage", browser_download_url: "https://example/a" }],
+      },
+      { asset: "orca-linux.AppImage", yml: "latest-linux.yml" },
+    );
     expect(info.sha256).toBe("");
   });
 
@@ -309,6 +369,61 @@ describe("talking to Orca", () => {
   });
 });
 
+describe("the platforms", () => {
+  test("the release asset is named after the machine", () => {
+    const asset = programAsset();
+    if (isMac()) {
+      expect(asset).toMatch(/^orca-box-darwin-(x64|arm64)$/);
+    } else {
+      expect(asset).toMatch(/^orca-box-linux-(x64|arm64)$/);
+    }
+    expect(programAssetUrl()).toContain(asset);
+  });
+
+  test("the Orca app asset is one for this platform", () => {
+    const { asset } = assetNames();
+    if (isMac()) {
+      expect(asset).toMatch(/^orca-macos-(x64|arm64)\.dmg$/);
+    } else {
+      expect(asset).toMatch(/^orca-linux(-arm64)?\.AppImage$/);
+    }
+  });
+
+  test("the macOS assets are the disk images the release publishes", () => {
+    const { asset, yml } = macAssetNames();
+    expect(asset).toMatch(/^orca-macos-(x64|arm64)\.dmg$/);
+    expect(yml).toMatch(/^latest-mac(-arm64)?\.yml$/);
+  });
+});
+
+describe("the lock on the box", () => {
+  test("it is taken and given back", async () => {
+    const dir = join(work, "locks");
+    mkdirSync(dir, { recursive: true });
+    const lock = new BoxLock(dir, "demo");
+    expect(await lock.acquire(5)).toBe(true);
+    lock.release();
+  });
+
+  test("it works without flock, with a lock file of its own", async () => {
+    // macOS has no flock; the lock file takes over there.
+    const dir = join(work, "locks-noflock");
+    mkdirSync(dir, { recursive: true });
+    const saved = process.env.PATH;
+    try {
+      process.env.PATH = join(work, "empty-path");
+      mkdirSync(join(work, "empty-path"), { recursive: true });
+      const lock = new BoxLock(dir, "demo");
+      expect(await lock.acquire(5)).toBe(true);
+      expect(existsSync(lock.file)).toBe(true);
+      lock.release();
+      expect(existsSync(lock.file)).toBe(false);
+    } finally {
+      process.env.PATH = saved;
+    }
+  });
+});
+
 describe("finding programs on PATH", () => {
   test("it finds a program that is there", () => {
     // sh is in every POSIX system.
@@ -345,6 +460,13 @@ describe("the subordinate id ranges", () => {
     expect(typeof subuid).toBe("boolean");
     expect(typeof subgid).toBe("boolean");
 
+    // macOS has no subordinate ids: the virtual machine maps them.
+    if (!existsSync("/etc/subuid")) {
+      expect(subuid).toBe(false);
+      expect(subgid).toBe(false);
+      return;
+    }
+
     // If the file names our uid, the range has to be there.
     const text = readFileSync("/etc/subuid", "utf8");
     const hasOurs = text
@@ -367,22 +489,26 @@ describe("the invocation name", () => {
 
     // The real program, built if it isn't there yet: a link named
     // orca-box-archive must dispatch to the archive command.
-    const dist = join(import.meta.dir, "..", "dist", "orca-box-linux-x64");
-    if (!existsSync(dist)) {
+    const built = join(work, "orca-box-bin");
+    if (!existsSync(built)) {
       Bun.spawnSync([
         process.execPath,
         "build",
         "--compile",
         "--outfile",
-        dist,
+        built,
         join(import.meta.dir, "..", "src", "main.ts"),
       ]);
     }
+    // Installed, as the setup puts it: a copy that is not installed would
+    // set itself up first.
+    const installed = installProgram(built);
     const link = join(bin, "orca-box-archive");
-    if (!existsSync(link)) symlinkSync(dist, link);
+    if (!existsSync(link)) symlinkSync(installed, link);
 
     // Run through the link: the name it was called by survives.
     const proc = Bun.spawnSync([link, "--help"], {
+      env: { ...process.env, HOME: home },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -394,5 +520,13 @@ describe("the invocation name", () => {
   test("it is this process's own name", () => {
     // Under bun test, the process was called "bun".
     expect(invokeName()).toBe(invokeName(process.argv[1]));
+  });
+
+  test("the name can be read from ps, as macOS needs", () => {
+    // macOS has no /proc, so the name comes from `ps`. This is the same
+    // call macOS makes, and it has to give the same answer.
+    const name = psCmdlineName(process.pid);
+    expect(name).not.toBeNull();
+    expect(name).toBe(invokeName());
   });
 });
