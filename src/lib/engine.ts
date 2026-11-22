@@ -5,9 +5,10 @@
  * code never has to care which engine is in use.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_FILE_DIR, setting } from "./config.ts";
+import { isMac, isWindows } from "./platform.ts";
 import { die, warn } from "./output.ts";
 import { hasCommand } from "./which.ts";
 
@@ -44,6 +45,14 @@ export function dockerIsRootless(): boolean {
 function engineHelp(): void {
   const has = (bin: string) => hasCommand(bin);
   if (has("docker")) {
+    if (isMac()) {
+      process.stderr.write(
+        "orca-box: Docker is installed but not usable. Start Docker Desktop\n" +
+          "and wait for it to come up, or install Podman instead (brew install\n" +
+          "podman && podman machine start).\n",
+      );
+      return;
+    }
     process.stderr.write(
       "orca-box: Docker is installed but not usable by your user. Start it with\n" +
         "  sudo systemctl enable --now docker\n" +
@@ -51,12 +60,23 @@ function engineHelp(): void {
         "log out and back in), or install Podman instead.\n",
     );
   } else if (has("podman")) {
+    if (isMac()) {
+      process.stderr.write(
+        "orca-box: podman is installed but 'podman info' fails; run\n" +
+          "  podman machine start\n" +
+          "and try again.\n",
+      );
+      return;
+    }
     process.stderr.write(
       "orca-box: podman is installed but 'podman info' fails; run it to see why.\n",
     );
   } else {
     process.stderr.write(
-      "orca-box: neither Podman nor Docker was found. Install one of them.\n",
+      isMac()
+        ? "orca-box: neither Podman nor Docker was found. Install Docker Desktop,\n" +
+            "or install Podman with Homebrew (brew install podman).\n"
+        : "orca-box: neither Podman nor Docker was found. Install one of them.\n",
     );
   }
 }
@@ -242,7 +262,8 @@ export function prepareHome(): void {
 /**
  * The mount option for a bind mount: "ro" or "rw".
  *
- * SELinux relabeling ("z") is added on hosts that have SELinux.
+ * SELinux relabeling ("z") is added on hosts that have SELinux. macOS has
+ * no SELinux, so nothing is added there.
  */
 export function mountOpt(mode: "ro" | "rw"): string {
   let opts = mode === "ro" ? "ro" : "";

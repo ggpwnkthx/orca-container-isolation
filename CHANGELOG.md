@@ -7,6 +7,22 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.0]
+
+### Added
+- **Windows support.** The program now runs on Windows as well as on
+  Linux and macOS:
+  - a Windows drive becomes a folder inside the box, so the worktree
+    at `C:\Users\me\project` is mounted at `/c/Users/me/project`
+  - the commands are small `.cmd` files, because Windows cannot run
+    a program through a link; a command can also be named as the first
+    argument, which is how Orca starts them
+  - the Orca app is installed from the release's installer, which is
+    downloaded, checked and then run
+  - the daily update is a task in the Task Scheduler
+  - git is told to trust the worktree, because the files Docker
+    Desktop shares with its virtual machine belong to root in the container
+
 ## [1.4.0]
 
 ### Changed

@@ -6,10 +6,22 @@
  * read-only unless ORCA_BOX_GIT=rw.
  */
 
-import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import type { FileSink } from "bun";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { basename, isAbsolute, join } from "node:path";
 import { createHash } from "node:crypto";
 import { setting } from "./config.ts";
 import {
@@ -280,9 +292,13 @@ export function boxState(name: string): string {
  * Only one launch may create the box: Orca often starts several agent
  * processes for one workspace at once.
  *
- * The lock is a real flock(2) lock on a file, held by a helper process
- * that we keep alive: if we die, the helper dies too and the lock frees
- * itself, so a crashed launch cannot wedge the workspace.
+ * The lock is a real file lock, held by a helper process that we keep
+ * alive: if we die, the helper dies too and the lock frees itself, so a
+ * crashed launch cannot wedge the workspace.
+ *
+ * Linux has flock(2); macOS has lockf(2) instead, so the helper is
+ * whichever of the two the system has. When neither is there, a lock
+ * file of our own is used instead.
  */
 export class BoxLock {
   readonly file: string;
@@ -299,14 +315,17 @@ export class BoxLock {
     const dir =
       runtimeDir && existsSync(runtimeDir)
         ? join(runtimeDir, "orca-box")
-        : join("/tmp", `orca-box-${process.getuid?.() ?? 0}`);
+        : join(tmpdir(), `orca-box-${process.getuid?.() ?? 0}`);
     try {
       mkdirSync(dir, { mode: 0o700 });
     } catch {
       // It may already exist.
     }
     const st = lstatSync(dir);
-    if (!st.isDirectory() || st.uid !== (process.getuid?.() ?? 0)) {
+    // Windows has no user ids of its own, so the folder there is only
+    // checked for being a folder.
+    const uid = process.getuid?.();
+    if (!st.isDirectory() || (uid !== undefined && st.uid !== uid)) {
       die(`orca-box: lock folder ${dir} isn't a private folder of yours`);
     }
     return dir;
@@ -351,6 +370,66 @@ export class BoxLock {
     this.writer = null;
     this.proc = null;
   }
+}
+
+/**
+ * The system program that takes an exclusive lock on a file.
+ *
+ * flock on Linux, lockf on macOS and the other BSDs. Both run a command
+ * while they hold the lock and print READY when they have it.
+ */
+function lockHelper(timeout: number, file: string): { bin: string[]; args: string[] } | null {
+  if (hasCommand("flock")) {
+    return {
+      bin: ["flock"],
+      args: ["-x", "-w", String(timeout), file, "-c", "echo READY; cat > /dev/null"],
+    };
+  }
+  if (hasCommand("lockf")) {
+    // lockf (macOS, the BSDs) locks the file exclusively and runs the
+    // command while it holds the lock. It needs the file to exist.
+    try {
+      writeFileSync(file, "");
+    } catch {
+      // It may already be there.
+    }
+    return {
+      bin: ["lockf"],
+      args: ["-t", String(timeout), file, "sh", "-c", "echo READY; cat > /dev/null"],
+    };
+  }
+  return null;
+}
+
+/** Is the lock file still held by a process that is alive? */
+function lockIsHeld(file: string): boolean {
+  let pid = 0;
+  try {
+    pid = Number(readFileSync(file, "utf8").trim());
+  } catch {
+    return false;
+  }
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means it exists but is not ours.
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * How to find out who holds the lock.
+ *
+ * /proc on Linux; on macOS the lock's own file says which process has
+ * it.
+ */
+function lockHolderHint(file: string): string {
+  if (isMac()) {
+    return `cat ${file}   # the process id that holds the lock`;
+  }
+  return `ls -l /proc/[0-9]*/fd 2>/dev/null | grep -F '${file}'`;
 }
 
 /** The script that runs inside the box as its PID 1. */
@@ -431,6 +510,14 @@ export async function runAgent(args: string[]): Promise<void> {
   }
 
   const target = resolveTarget();
+  if (target.worktree && !isShareableOnMac(target.worktree)) {
+    warn(
+      `${target.worktree} is in a folder Docker Desktop doesn't share with its virtual\n` +
+        "    machine, so the box can't mount it. Move the worktree into your home\n" +
+        "    folder, /Volumes or /tmp, or share the folder in Docker Desktop's\n" +
+        "    settings (File → Settings → Resources → File sharing).",
+    );
+  }
   const skills = skillMounts();
   const skillSync = skills.sync;
   const gh = ghMounts();
@@ -495,7 +582,7 @@ export async function runAgent(args: string[]): Promise<void> {
       if (!state.startsWith("true 2 ")) {
         die(
           `orca-box: timed out after ${lockTimeout}s waiting for another launch in this workspace.\n` +
-            `orca-box: what holds the lock: ls -l /proc/[0-9]*/fd 2>/dev/null | grep -F '${lock.file}'`,
+            `orca-box: what holds the lock: ${lockHolderHint(lock.file)}`,
         );
       }
     } else {

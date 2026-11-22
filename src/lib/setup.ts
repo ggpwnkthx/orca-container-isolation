@@ -79,15 +79,31 @@ function currentUsername(): string {
   } catch {
     // No passwd file to read.
   }
-  return process.env.USER ?? process.env.LOGNAME ?? "";
+  const fromEnv = process.env.USER ?? process.env.LOGNAME ?? "";
+  if (fromEnv) return fromEnv;
+  // Last resort: ask the system.
+  try {
+    const proc = Bun.spawnSync(["id", "-un"], {
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+    return new TextDecoder().decode(proc.stdout).trim();
+  } catch {
+    return "";
+  }
 }
 
 /**
  * Does your user have a range of subordinate ids in /etc/subuid or
  * /etc/subgid? Rootless Podman needs one to map your user into a
  * container.
+ *
+ * This is a Linux thing: macOS has no subordinate ids, because the
+ * containers run in a virtual machine that maps them itself.
  */
 export function hasSubidRange(file: "subuid" | "subgid"): boolean {
+  if (!isLinux()) return false;
   const path = join("/etc", file);
   try {
     // The file is keyed by name on some systems and by uid on others, so
@@ -283,18 +299,26 @@ export async function setup(options: SetupOptions): Promise<void> {
       }
       say(`Using Podman ${ver} (rootless)`);
 
+      if (isMac()) {
+        // Podman on macOS runs the containers in a virtual machine. The
+        // user mapping is done by the machine, so the Linux helpers and
+        // subordinate ids aren't needed -- but the machine has to exist.
+        plain("    Note: on macOS, Podman runs in a virtual machine (podman machine).");
+        plain("    Docker Desktop is usually the smoother choice here.");
+      }
+
       // Rootless Podman maps your user into the container with
       // --userns=keep-id, which needs the setuid helpers and a range of
       // subordinate ids. Some distributions ship Podman without them, and
       // the failure only shows up much later, as a box that won't start.
-      if (!hasCommand("newuidmap")) {
+      if (isLinux() && !hasCommand("newuidmap")) {
         warn(
           "newuidmap isn't installed, so rootless Podman can't map your user into a box.\n" +
             "    Install it with your package manager: uidmap (Debian, Ubuntu),\n" +
             "    shadow-utils (Fedora), shadow (Arch), or use Docker instead.",
         );
       }
-      if (!hasSubidRange("subuid") || !hasSubidRange("subgid")) {
+      if (isLinux() && (!hasSubidRange("subuid") || !hasSubidRange("subgid"))) {
         warn(
           "your user has no subuid/subgid range, so rootless Podman can't map\n" +
             "    your user into a box. Add one, or use Docker instead:\n" +
@@ -307,6 +331,11 @@ export async function setup(options: SetupOptions): Promise<void> {
       say("Using Docker");
       plain("    Note: access to the Docker daemon is root-equivalent on this machine;");
       plain("    the boxes themselves still run as your user with no capabilities.");
+      if (isMac()) {
+        plain("    On macOS this is Docker Desktop: the containers run in a virtual");
+        plain("    machine, and the worktree has to be in a folder Docker shares");
+        plain("    (your home folder, /Volumes, /private or /tmp).");
+      }
       break;
     case "docker-rootless":
       say("Using rootless Docker");
@@ -390,11 +419,7 @@ export async function setup(options: SetupOptions): Promise<void> {
     let running = runningOrca();
     if (running.pid === 0 && options.launch && existsSync(appPaths().dest)) {
       say("Starting Orca to apply its settings");
-      Bun.spawnSync(["setsid", "-f", appPaths().dest], {
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "ignore",
-      });
+      startApp(appPaths().dest);
       for (let i = 0; i < 90; i++) {
         await Bun.sleep(1000);
         running = runningOrca();
@@ -426,6 +451,42 @@ function archiveAll(): void {
       stderr: "ignore",
     });
   }
+}
+
+/**
+ * Start the Orca app, detached from this process.
+ *
+ * On Linux that is the AppImage, started with setsid so it outlives the
+ * installer. On macOS it is an application bundle, started with `open`.
+ */
+export function startApp(app: string): void {
+  if (isMac()) {
+    runIfPresent("open", ["-a", app], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    return;
+  }
+  if (isWindows()) {
+    // Orca is an installed program; start the one that is installed.
+    const installed = findWindowsOrca() || app;
+    if (!installed) {
+      warn("Orca isn't installed yet; install it and run orca-box-configure-orca");
+      return;
+    }
+    Bun.spawnSync([installed], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    return;
+  }
+  runIfPresent("setsid", ["-f", app], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
 }
 
 /**
