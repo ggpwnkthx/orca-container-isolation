@@ -17,7 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import { macAppPaths, removeMacApp } from "../src/lib/macapp.ts";
 
@@ -85,7 +85,7 @@ function install(): { output: string; code: number } {
     {
       env: {
         ...process.env,
-        PATH: `${join(work, "bin")}:${process.env.PATH ?? ""}`,
+        PATH: `${join(work, "bin")}${delimiter}${process.env.PATH ?? ""}`,
         HOME: work,
         ORCA_APP_DIR: apps,
         XDG_DATA_HOME: join(work, "data"),

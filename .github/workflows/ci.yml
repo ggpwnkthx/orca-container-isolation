@@ -23,7 +23,26 @@ jobs:
         run: bun x tsc --noEmit
 
       - name: Test
-        run: bun test
+        shell: bash
+        run: |
+          set +e
+          out="$(bun test --timeout 30000 2>&1)"
+          code=$?
+          echo "$out" | tail -40
+          if [ "$code" -ne 0 ]; then
+            # Put the failure in the annotations, so it can be read
+            # without the job's log.
+            summary="$(echo "$out" | grep -E '^\((fail|todo)\)|^ *[0-9]+ (pass|fail)|error:' | head -30)"
+            summary="${summary//$'\n'/%0A}"
+            echo "::error title=Test failure::${summary}"
+            tail="$(echo "$out" | tail -25)"
+            tail="${tail//$'\n'/%0A}"
+            echo "::error title=Test output::${tail}"
+            info="bun $(bun --version); git $(git --version); uname $(uname -a)"
+            info="${info//$'\n'/%0A}"
+            echo "::error title=Test environment::${info}"
+          fi
+          exit "$code"
 
       - name: Build
         run: ./build.sh
@@ -50,14 +69,16 @@ jobs:
 
       - name: Check the macOS builds are macOS
         run: |
+          # A Mach-O 64-bit binary starts with cf fa ed fe.
           for asset in dist/orca-box-darwin-x64 dist/orca-box-darwin-arm64; do
-            head -c 4 "$asset" | od -c | grep -q "M  a  c  h" \
+            head -c 4 "$asset" | od -An -tx1 | grep -q "cf fa ed fe" \
               || (echo "$asset is not a macOS executable" >&2; exit 1)
           done
 
       - name: Check the Windows build is a Windows program
         run: |
-          head -c 2 dist/orca-box-windows-x64.exe | od -c | grep -q "M  Z" \
+          # A Windows program starts with "MZ".
+          head -c 2 dist/orca-box-windows-x64.exe | od -An -tx1 | grep -q "4d 5a" \
             || (echo "the Windows build is not a Windows program" >&2; exit 1)
 
   # The program has to work on macOS as well as on Linux, so it is built
@@ -78,7 +99,26 @@ jobs:
         run: bun x tsc --noEmit
 
       - name: Test
-        run: bun test
+        shell: bash
+        run: |
+          set +e
+          out="$(bun test --timeout 30000 2>&1)"
+          code=$?
+          echo "$out" | tail -40
+          if [ "$code" -ne 0 ]; then
+            # Put the failure in the annotations, so it can be read
+            # without the job's log.
+            summary="$(echo "$out" | grep -E '^\((fail|todo)\)|^ *[0-9]+ (pass|fail)|error:' | head -30)"
+            summary="${summary//$'\n'/%0A}"
+            echo "::error title=Test failure::${summary}"
+            tail="$(echo "$out" | tail -25)"
+            tail="${tail//$'\n'/%0A}"
+            echo "::error title=Test output::${tail}"
+            info="bun $(bun --version); git $(git --version); uname $(uname -a)"
+            info="${info//$'\n'/%0A}"
+            echo "::error title=Test environment::${info}"
+          fi
+          exit "$code"
 
       - name: Build
         run: ./build.sh
@@ -117,7 +157,26 @@ jobs:
         run: bun x tsc --noEmit
 
       - name: Test
-        run: bun test
+        shell: bash
+        run: |
+          set +e
+          out="$(bun test --timeout 30000 2>&1)"
+          code=$?
+          echo "$out" | tail -40
+          if [ "$code" -ne 0 ]; then
+            # Put the failure in the annotations, so it can be read
+            # without the job's log.
+            summary="$(echo "$out" | grep -E '^\((fail|todo)\)|^ *[0-9]+ (pass|fail)|error:' | head -30)"
+            summary="${summary//$'\n'/%0A}"
+            echo "::error title=Test failure::${summary}"
+            tail="$(echo "$out" | tail -25)"
+            tail="${tail//$'\n'/%0A}"
+            echo "::error title=Test output::${tail}"
+            info="bun $(bun --version); git $(git --version); uname $(uname -a)"
+            info="${info//$'\n'/%0A}"
+            echo "::error title=Test environment::${info}"
+          fi
+          exit "$code"
 
       - name: Build
         run: |

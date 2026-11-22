@@ -343,6 +343,13 @@ async function main(): Promise<void> {
   name = command.name;
   args = command.args;
 
+  // Asking for help needs nothing: not an engine, not the program
+  // installed, not the app. So it is answered before anything else is
+  // set up, and a copy that has not been set up yet just prints it.
+  if (args[0] === "-h" || args[0] === "--help") {
+    usage(name);
+  }
+
   // A copy of the program that has not been set up yet: it installs
   // itself and sets everything up first, and then does what was asked.
   if (!isInstalled() && name !== "orca-box-setup") {

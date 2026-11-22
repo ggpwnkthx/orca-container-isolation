@@ -10,7 +10,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, symlinkSync, chmodSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import { sha512FromYml } from "../src/lib/appimage.ts";
 import { assetNames } from "../src/lib/app.ts";
@@ -111,7 +111,7 @@ function run(args: string[], env: Record<string, string> = {}): {
         USERPROFILE: home,
         HOMEDRIVE: "",
         HOMEPATH: "",
-        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
         FAKE_LOG: log,
         ...env,
       },

@@ -7,6 +7,13 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.3]
+
+### Fixed
+- Asking the program for help no longer sets it up first: a copy
+  that has not been set up yet prints its usage and stops, instead of
+  building the agent image and installing the app first.
+
 ## [1.7.2]
 
 ### Changed
