@@ -1,6 +1,6 @@
 {
   "name": "orca-box",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "description": "Run Claude Code, Codex and pi from Orca inside a container per workspace",
   "type": "module",
   "private": true,

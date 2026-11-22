@@ -11,7 +11,8 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
+  renameSync,
+  rmSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -19,69 +20,30 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CONFIG_FILE_DIR, setConfig, setting } from "./config.ts";
-import {
-  appPaths,
-  assetNames,
-  fetchText,
-  fetchToFile,
-  hasFuse,
-  installFallbackIcon,
-  installIcons,
-  releaseInfo,
-  removeApp,
-  sha256File,
-  sha512FileBase64,
-  sha512FromYml,
-  writeDesktopFile,
-} from "./appimage.ts";
+import { TOOLS } from "./command.ts";
+import { appPaths, installOrcaApp, removeApp } from "./app.ts";
+import { findWindowsOrca } from "./windowsapp.ts";
 import {
   boxIds,
   buildImage,
   engineBinary,
   engineMode,
+  engineSupportsNoNewPrivileges,
   initEngine,
   nameOf,
   rememberEngine,
 } from "./engine.ts";
 import { containerfile } from "../assets/skill-sync.ts";
 import { configure, runningOrca, userDataDir } from "./orca.ts";
+import { isLinux, isMac, isWindows } from "./platform.ts";
+import { removeAutoUpdate } from "./update.ts";
+import { paths } from "./paths.ts";
 import { die, plain, say, warn } from "./output.ts";
-import { hasCommand } from "./which.ts";
+import { hasCommand, runIfPresent } from "./which.ts";
 
 /** The commands this project installs, and the function behind each. */
-export const TOOLS = [
-  "orca-box",
-  "orca-box-archive",
-  "orca-box-login",
-  "orca-box-configure-orca",
-  "orca-box-install-orca",
-  "orca-box-update",
-  "orca-box-setup",
-] as const;
-export type Tool = (typeof TOOLS)[number];
-
-export interface Paths {
-  /** Where the tool's own files live. */
-  data: string;
-  /** Where the commands are linked. */
-  bin: string;
-  /** The installed program. */
-  program: string;
-  /** Where the agent image's Containerfile goes. */
-  containerfile: string;
-}
-
-export function paths(): Paths {
-  const dataHome = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
-  const data = join(dataHome, "orca-box");
-  const prefix = process.env.PREFIX ?? join(homedir(), ".local");
-  return {
-    data,
-    bin: join(prefix, "bin"),
-    program: join(data, "orca-box"),
-    containerfile: join(data, "Containerfile"),
-  };
-}
+export { TOOLS } from "./command.ts";
+export type { Tool } from "./command.ts";
 
 export interface SetupOptions {
   mode: "install" | "update" | "uninstall";
@@ -98,185 +60,14 @@ export interface SetupOptions {
   brief: boolean;
 }
 
-/** Install the Orca app from a release, or from an AppImage the user has. */
-export async function installOrcaApp(from: string): Promise<void> {
-  const { asset, yml } = assetNames();
-  const { dir, dest } = appPaths();
-  const api = process.env.ORCA_BOX_GITHUB_API ?? "https://api.github.com";
-
-  mkdirSync(dir, { recursive: true });
-  const work = join(dataWork(), "appimage");
-  mkdirSync(work, { recursive: true });
-  const newApp = join(work, "new.AppImage");
-
-  let version = "";
-
-  if (from) {
-    if (!existsSync(from)) die(`no such file: ${from}`);
-    copyFileSync(from, newApp);
-    say(`Installing ${from}`);
-  } else {
-    say("Looking up the latest Orca release");
-    let release: unknown;
-    try {
-      release = JSON.parse(
-        await fetchText(`${api}/repos/stablyai/orca/releases/latest`),
-      );
-    } catch {
-      die(
-        "couldn't reach GitHub's API. Download Orca from https://orca.dev and run: orca-box-install-orca --from FILE",
-      );
-    }
-    const info = await releaseInfo(release as Parameters<typeof releaseInfo>[0]);
-    version = info.version;
-    if (!info.url) {
-      die(
-        `release ${version || "latest"} has no ${asset}. Download Orca from https://orca.dev and run: orca-box-install-orca --from FILE`,
-      );
-    }
-
-    // Already have exactly this build? (Orca's updater may have got there first.)
-    if (info.sha256 && existsSync(dest) && sha256File(dest) === info.sha256) {
-      say(`Orca ${version} is already installed at ${dest}`);
-    } else {
-      say(`Downloading Orca ${version} (${asset})`);
-      try {
-        await fetchToFile(info.url, newApp);
-      } catch (err) {
-        die(`couldn't download Orca: ${(err as Error).message}`);
-      }
-
-      if (info.sha256) {
-        if (sha256File(newApp) !== info.sha256) {
-          die("SHA-256 of the download doesn't match GitHub's digest; not installing");
-        }
-        say("Verified SHA-256 against GitHub's digest");
-      } else if (info.ymlUrl) {
-        let ymlText = "";
-        try {
-          ymlText = await fetchText(info.ymlUrl);
-        } catch {
-          ymlText = "";
-        }
-        if (ymlText) {
-          const want = sha512FromYml(ymlText, asset);
-          if (!want) {
-            die(`no sha512 for this file in ${yml}; not installing`);
-          }
-          if (sha512FileBase64(newApp) !== want) {
-            die(`the download doesn't match the SHA-512 in ${yml}; not installing`);
-          }
-          say(`Verified SHA-512 against ${yml}`);
-        } else if (process.env.ORCA_BOX_ALLOW_UNVERIFIED === "1") {
-          warn(
-            `no checksum published for ${asset}; installing unverified (ORCA_BOX_ALLOW_UNVERIFIED=1)`,
-          );
-        } else {
-          die(
-            `no checksum published for ${asset}, so it can't be verified. Set ORCA_BOX_ALLOW_UNVERIFIED=1 to install anyway.`,
-          );
-        }
-      } else if (process.env.ORCA_BOX_ALLOW_UNVERIFIED === "1") {
-        warn(
-          `no checksum published for ${asset}; installing unverified (ORCA_BOX_ALLOW_UNVERIFIED=1)`,
-        );
-      } else {
-        die(
-          `no checksum published for ${asset}, so it can't be verified. Set ORCA_BOX_ALLOW_UNVERIFIED=1 to install anyway.`,
-        );
-      }
-    }
-  }
-
-  if (existsSync(newApp)) {
-    // Is it even an AppImage?
-    const head = readFileSync(newApp).subarray(0, 4);
-    if (head[0] !== 0x7f || head[1] !== 0x45 || head[2] !== 0x4c || head[3] !== 0x46) {
-      die("that file isn't an AppImage (not an ELF executable)");
-    }
-    chmodSync(newApp, 0o755);
-    // Same-folder rename: atomic, and a running Orca keeps its old copy open.
-    const tmp = join(dir, `.orca.AppImage.${process.pid}`);
-    copyFileSync(newApp, tmp);
-    chmodSync(tmp, 0o755);
-    Bun.spawnSync(["mv", "-f", tmp, dest]);
-    say(`Installed ${dest}`);
-  }
-
-  // --- menu entry, from the .desktop file and icons inside the AppImage ---
-  say("Adding Orca to the application menu");
-  const extract = join(work, "extract");
-  mkdirSync(extract, { recursive: true });
-  for (const pattern of ["*.desktop", "usr/share/icons/*", ".DirIcon"]) {
-    Bun.spawnSync([dest, "--appimage-extract", pattern], {
-      cwd: extract,
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-  }
-  const root = join(extract, "squashfs-root");
-
-  // An AppImage mounts itself with FUSE to run. Where FUSE isn't there,
-  // extract it once and run the extracted copy instead: that works
-  // everywhere, at the cost of some disk.
-  let program = dest;
-  if (!hasFuse()) {
-    const unpacked = `${dest}.d`;
-    say("This system has no FUSE, so Orca is extracted instead of mounted");
-    Bun.spawnSync(["rm", "-rf", unpacked]);
-    mkdirSync(unpacked, { recursive: true });
-    const done = Bun.spawnSync([dest, "--appimage-extract"], {
-      cwd: unpacked,
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    const appRun = join(unpacked, "squashfs-root", "AppRun");
-    if (done.exitCode === 0 && existsSync(appRun)) {
-      chmodSync(appRun, 0o755);
-      program = appRun;
-    } else {
-      Bun.spawnSync(["rm", "-rf", unpacked]);
-      warn(
-        "couldn't extract Orca, and this system has no FUSE to mount it with;\n" +
-          "    install fuse3 (or fuse) with your package manager, then rerun\n" +
-          "    orca-box-install-orca",
-      );
-    }
-  }
-
-  if (!installIcons(root) && !installFallbackIcon(root)) {
-    warn("couldn't extract Orca's icon; the menu entry will use a generic one");
-  }
-
-  const { desktopFile } = appPaths();
-  if (existsSync(desktopFile) && !readFileSync(desktopFile, "utf8").includes("X-Orca-Box=true")) {
-    copyFileSync(desktopFile, `${desktopFile}.bak`);
-    warn(`replaced an existing ${desktopFile} (saved as ${desktopFile}.bak)`);
-  }
-
-  let embedded = "";
-  try {
-    for (const entry of readdirSync(root)) {
-      if (entry.endsWith(".desktop")) {
-        embedded = join(root, entry);
-        break;
-      }
-    }
-  } catch {
-    embedded = "";
-  }
-  writeDesktopFile(embedded, dest, "orca-ide", version, program);
-
-  Bun.spawnSync(["rm", "-rf", work]);
-}
-
 /**
  * Your login name.
  *
  * Read from /etc/passwd, matched by uid, rather than asked for: the
  * $USER environment variable isn't set under `su`, in some service
  * managers, or in a bare container, and the runtime's own lookup can fail
- * when the name service isn't reachable.
+ * when the name service isn't reachable. macOS has no /etc/passwd, so the
+ * name comes from the environment there.
  */
 function currentUsername(): string {
   try {
@@ -318,39 +109,44 @@ export function hasSubidRange(file: "subuid" | "subgid"): boolean {
   }
 }
 
-/** A scratch folder for the installer's temporary files. */
-function dataWork(): string {
-  const dir = join(paths().data, "work");
-  mkdirSync(dir, { recursive: true });
-  return dir;
+/**
+ * The command Orca should use to start an agent.
+ *
+ * Orca adds ~/.local/bin to its own PATH, so the bare name works for
+ * terminal tabs and background jobs alike, and is the same on every
+ * machine. A literal "~" would not work: Orca runs background jobs
+ * without a shell. With a custom PREFIX, Orca can't find the bare name,
+ * so use the full path.
+ *
+ * On Windows a .cmd file cannot be started without a shell, so the
+ * program itself is named.
+ */
+export function orcaCommandPrefix(): string {
+  const { bin, program } = paths();
+  if (isWindows()) return program;
+  const localBin = join(homedir(), ".local", "bin");
+  if (bin !== localBin) {
+    return join(bin, "orca-box");
+  }
+  return "orca-box";
 }
 
 /** Point Orca's agents at orca-box. */
 async function configureOrca(yolo: boolean): Promise<boolean> {
-  const { bin, program } = paths();
+  const { program } = paths();
   const saved = join(CONFIG_FILE_DIR, "orca-previous-commands.json");
-
-  // Orca adds ~/.local/bin to its own PATH, so the bare name works for
-  // terminal tabs and background jobs alike, and is the same on every
-  // machine. A literal "~" would not work: Orca runs background jobs
-  // without a shell. With a custom PREFIX, Orca can't find the bare name,
-  // so use the full path.
-  let prefix = "orca-box";
-  const localBin = join(homedir(), ".local", "bin");
-  if (bin !== localBin) {
-    prefix = join(bin, "orca-box");
-  }
+  const prefix = orcaCommandPrefix();
 
   try {
-    await configure({
+    return await configure({
       action: "set",
       yolo,
       boxPath: program,
       savedPath: saved,
       prefix,
     });
-    return true;
-  } catch {
+  } catch (err) {
+    warn(`couldn't reach Orca: ${(err as Error).message}`);
     return false;
   }
 }
@@ -448,14 +244,6 @@ export async function setup(options: SetupOptions): Promise<void> {
       die(`${tool} not found`);
     }
   }
-  if (
-    options.installApp &&
-    !hasCommand("curl") &&
-    !options.appFrom
-  ) {
-    die("curl not found");
-  }
-
   // --- 1. the Orca app ----------------------------------------------------
   if (options.installApp) {
     try {
@@ -577,6 +365,17 @@ export async function setup(options: SetupOptions): Promise<void> {
       say(`Building ${setting("ORCA_BOX_IMAGE")} (first build takes a few minutes)`);
       buildImage(data);
     }
+  }
+
+  // Does the engine know --security-opt no-new-privileges? Older Docker
+  // Desktop versions on macOS don't, and a box that can't start is worse
+  // than one without that extra guard.
+  if (setting("ORCA_BOX_NO_NEW_PRIVILEGES") !== "0" && !engineSupportsNoNewPrivileges()) {
+    setConfig("ORCA_BOX_NO_NEW_PRIVILEGES", "0");
+    warn(
+      "this container engine doesn't accept --security-opt no-new-privileges;\n" +
+        "    turning it off (the boxes still drop all capabilities and run as you)",
+    );
   }
 
   const pathEntries = (process.env.PATH ?? "").split(":");

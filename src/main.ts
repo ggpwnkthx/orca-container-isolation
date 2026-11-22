@@ -7,17 +7,18 @@
  * kernel saw it, so it survives being run through a symlink.
  */
 
-import { loadConfig, setting } from "./lib/config.ts";
+import { join } from "node:path";
+import { CONFIG_FILE_DIR, loadConfig, setting } from "./lib/config.ts";
 import { invokeName } from "./lib/invoke.ts";
 import { initEngine } from "./lib/engine.ts";
 import { archive, login, runAgent } from "./lib/box.ts";
 import { configure } from "./lib/orca.ts";
-import { removeApp } from "./lib/appimage.ts";
+import { installOrcaApp, removeApp } from "./lib/app.ts";
+import { isInstalled, paths } from "./lib/paths.ts";
+import { resolveCommand } from "./lib/command.ts";
 import {
-  installOrcaApp,
-  paths,
+  orcaCommandPrefix,
   setup,
-  TOOLS,
   uninstall,
   type SetupOptions,
 } from "./lib/setup.ts";
@@ -185,6 +186,17 @@ function usage(tool: string): never {
   process.exit(0);
 }
 
+/**
+ * Set up a copy of the program that has not been installed yet.
+ *
+ * The program installs itself, builds the agent image and points Orca's
+ * agents at it; after that, the command that was asked for runs.
+ */
+async function setUpACopy(): Promise<void> {
+  say("This copy of orca-box hasn't been set up yet, so it sets itself up first.");
+  await setup(parseSetupOptions([]));
+}
+
 /** The installer's own options. */
 function parseSetupOptions(args: string[]): SetupOptions {
   const options: SetupOptions = {
@@ -316,15 +328,15 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // Run as orca-box-setup: an optional tool name first, else the installer.
-  if (!(TOOLS as readonly string[]).includes(name)) {
-    const first = args[0];
-    if (first && (TOOLS as readonly string[]).includes(first)) {
-      name = first;
-      args = args.slice(1);
-    } else {
-      name = "orca-box-setup";
-    }
+  // Which command is this?
+  const command = resolveCommand(name, args);
+  name = command.name;
+  args = command.args;
+
+  // A copy of the program that has not been set up yet: it installs
+  // itself and sets everything up first, and then does what was asked.
+  if (!isInstalled() && name !== "orca-box-setup") {
+    await setUpACopy();
   }
 
   switch (name) {
@@ -357,16 +369,18 @@ async function main(): Promise<void> {
           process.exit(2);
         }
       }
-      const { bin } = paths();
-      const prefix =
-        bin === `${process.env.HOME}/.local/bin` ? "orca-box" : `${bin}/orca-box`;
-      await configure({
-        action,
-        yolo,
-        boxPath: `${paths().data}/orca-box`,
-        savedPath: `${process.env.XDG_CONFIG_HOME ?? `${process.env.HOME}/.config`}/orca-box/orca-previous-commands.json`,
-        prefix,
-      });
+      try {
+        const ok = await configure({
+          action,
+          yolo,
+          boxPath: paths().program,
+          savedPath: join(CONFIG_FILE_DIR, "orca-previous-commands.json"),
+          prefix: orcaCommandPrefix(),
+        });
+        process.exit(ok ? 0 : 1);
+      } catch (err) {
+        die(`orca-box-configure-orca: ${(err as Error).message}`, 3);
+      }
       break;
     }
     case "orca-box-install-orca": {

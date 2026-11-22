@@ -7,6 +7,25 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.0]
+
+### Changed
+- **The program is installed by downloading it.** The release carries
+  one executable per platform, and people download the one for their
+  machine and run it: it copies itself into place, builds the agent
+  image, installs the Orca app and points Orca's agents at orca-box.
+  There is no bootstrapper script any more, so nothing needs Bun or
+  curl on the machine that runs it.
+
+### Fixed
+- **The program had two entry behaviours, decided by the name it was
+  called by.** A downloaded copy set itself up; a copy renamed to
+  `orca-box` did not, and said something confusing instead. The two
+  questions are now answered separately: the name says which command to
+  run, and whether the file is the installed program says whether it has
+  to be set up first. A copy that has not been set up now sets itself up
+  and then does what was asked.
+
 ## [1.3.2]
 
 ### Added
