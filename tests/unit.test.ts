@@ -8,7 +8,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, symlinkSync, chmodSync, copyFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, symlinkSync, chmodSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -240,13 +240,17 @@ describe("the checksum from latest-linux.yml", () => {
 /**
  * The worktree as the program sees it.
  *
- * Git gives the real path (on macOS /var is a link to /private/var) and
- * writes it with forward slashes, even on Windows. The expectations have
- * to use the same path.
+ * Git gives the path, with the real name of every folder (on Windows
+ * the temporary folder may be named in the short form, RUNNER~1, and
+ * git writes the long one) and with forward slashes.
  */
-function repoReal(): string {
-  const path = isWindows() ? repo : realpathSync(repo);
-  return path.replace(/\\/g, "/");
+function worktreePath(): string {
+  const top = Bun.spawnSync(
+    ["git", "-C", repo, "rev-parse", "--show-toplevel"],
+    { stdout: "pipe", stderr: "ignore", stdin: "ignore" },
+  );
+  const out = new TextDecoder().decode(top.stdout).trim();
+  return (out || repo).replace(/\\/g, "/");
 }
 
 /** Where the GitHub CLI keeps its credentials, as the program looks for them. */
@@ -259,7 +263,7 @@ describe("running a box", () => {
   test("it runs the agent in the workspace's box", () => {
     const { log } = run(["orca-box", "claude"]);
     expect(log).toContain("PODMAN exec -i");
-    expect(log).toContain(repoReal());
+    expect(log).toContain(worktreePath());
   });
 
   test("an existing box is reused, not recreated", () => {
@@ -275,8 +279,8 @@ describe("running a box", () => {
 
   test("the .git directory is read-only by default", () => {
     const { log } = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
-    const gitDir = join(repoReal(), ".git");
-    expect(log).toContain(`-v ${containerPath(gitDir)}:${containerPath(gitDir)}:ro`);
+    const gitDir = `${worktreePath()}/.git`;
+    expect(log).toContain(`-v ${gitDir}:${containerPath(gitDir)}:ro`);
   });
 
   test("rw mode makes .git writable but keeps hooks read-only", () => {
@@ -284,19 +288,20 @@ describe("running a box", () => {
       FAKE_EXISTING: "0",
       ORCA_BOX_GIT: "rw",
     });
-    const gitDir = join(repoReal(), ".git");
-    const hooks = join(gitDir, "hooks");
-    const config = join(gitDir, "config");
-    expect(log).toContain(`-v ${containerPath(gitDir)}:${containerPath(gitDir)}`);
-    expect(log).toContain(`-v ${containerPath(hooks)}:${containerPath(hooks)}:ro`);
-    expect(log).toContain(`-v ${containerPath(config)}:${containerPath(config)}:ro`);
+    const gitDir = `${worktreePath()}/.git`;
+    const hooks = `${gitDir}/hooks`;
+    const config = `${gitDir}/config`;
+    expect(log).toContain(`-v ${gitDir}:${containerPath(gitDir)}`);
+    expect(log).toContain(`-v ${hooks}:${containerPath(hooks)}:ro`);
+    expect(log).toContain(`-v ${config}:${containerPath(config)}:ro`);
     expect(log).toContain("GIT_CONFIG_KEY_1=maintenance.auto");
   });
 
   test("the host's skills are mounted read-only", () => {
     const { log } = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
+    // The host side of the mount is the path as the system writes it.
     const skills = join(home, ".agents/skills");
-    expect(log).toContain(`-v ${containerPath(skills)}:${containerPath(skills)}:ro`);
+    expect(log).toContain(`-v ${skills}:${containerPath(skills)}:ro`);
   });
 
   test("ORCA_BOX_SKILLS=0 turns the skill mounts off", () => {

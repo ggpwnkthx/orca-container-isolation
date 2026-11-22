@@ -7,6 +7,13 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.5]
+
+### Changed
+- The tests follow git for the worktree's path now: git writes it
+  with the real name of every folder (Windows names its temporary
+  folders in the short form) and with forward slashes.
+
 ## [1.7.4]
 
 ### Fixed
