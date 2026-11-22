@@ -7,6 +7,8 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0]
+
 ### Added
 - A GitHub Actions workflow that typechecks, tests and builds every push.
 - A release workflow: tag `v1.2.3` and the executables are attached to the
@@ -44,6 +46,9 @@ and this project uses [semantic versioning](https://semver.org/).
   revision of a branch, so a broken `main` can never reach users.
 - musl builds (Alpine) are released alongside the glibc ones, and the
   installer picks the right one.
+- Internal: the platform, the paths, the commands and the release
+  information moved into modules of their own, so the rest of the program
+  asks one place where it is running.
 
 ## [1.0.0]
 
