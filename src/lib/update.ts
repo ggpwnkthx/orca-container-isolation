@@ -6,18 +6,24 @@
  */
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { setQuiet, say, die, plain } from "./output.ts";
-import { hasCommand } from "./which.ts";
-import { paths } from "./setup.ts";
+import { setQuiet, say, die, plain, warn } from "./output.ts";
+import { hasCommand, runIfPresent } from "./which.ts";
+import { paths } from "./paths.ts";
+import { isMac, isWindows, programAsset, programAssetUrl } from "./platform.ts";
 import { VERSION } from "./version.ts";
 import { boxIds, engineBinary } from "./engine.ts";
 
-/** Where the update is fetched from. */
+/**
+ * Where the update is fetched from.
+ *
+ * Each platform has its own executable in the release, so the name of the
+ * asset depends on the machine.
+ */
 export const SOURCE_URL =
-  process.env.ORCA_BOX_SOURCE_URL ??
-  "https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box";
+  process.env.ORCA_BOX_SOURCE_URL ?? programAssetUrl();
 
 /** The version of this program. */
 
@@ -42,8 +48,28 @@ function unitPaths(): { units: string; service: string; timer: string } {
   };
 }
 
+/** The launchd agent that makes the update check automatic on macOS. */
+function launchdPath(): string {
+  const dir = join(homedir(), "Library", "LaunchAgents");
+  return join(dir, "dev.orca-box.update.plist");
+}
+
+/** The launchd job's label. */
+const LAUNCHD_LABEL = "dev.orca-box.update";
+
+/** The name of the Windows scheduled task. */
+const WINDOWS_TASK = "orca-box daily update";
+
 /** Turn the daily update check on or off. */
 export function setAutoUpdate(mode: "on" | "off"): void {
+  if (isMac()) {
+    setAutoUpdateOnMac(mode);
+    return;
+  }
+  if (isWindows()) {
+    setAutoUpdateOnWindows(mode);
+    return;
+  }
   const { units, service, timer } = unitPaths();
 
   if (mode === "on") {
@@ -114,8 +140,123 @@ WantedBy=timers.target
   say("Daily orca-box updates are off.");
 }
 
+/**
+ * The daily update on macOS: a launchd agent in the user's own
+ * LaunchAgents folder.
+ *
+ * launchd is what macOS uses instead of systemd; the agent is loaded for
+ * the user's own login session, so it needs no administrator rights.
+ */
+function setAutoUpdateOnMac(mode: "on" | "off"): void {
+  const plist = launchdPath();
+
+  if (mode === "on") {
+    const program = join(paths().bin, "orca-box-update");
+    mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true });
+    writeFileSync(
+      plist,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LAUNCHD_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${program}</string>
+    <string>--quiet</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>${join(homedir(), "Library", "Logs", "orca-box-update.log")}</string>
+  <key>StandardErrorPath</key>
+  <string>${join(homedir(), "Library", "Logs", "orca-box-update.log")}</string>
+</dict>
+</plist>
+`,
+    );
+    // Load it into this user's session. An agent that is already loaded
+    // is taken out first, so turning this on twice is harmless.
+    runIfPresent("launchctl", [
+      "bootout",
+      `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`,
+    ]);
+    runIfPresent("launchctl", ["bootstrap", `gui/${process.getuid?.() ?? 0}`, plist]);
+    say("Daily orca-box updates are on (orca-box-update --disable-auto to stop).");
+    return;
+  }
+
+  runIfPresent("launchctl", [
+    "bootout",
+    `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`,
+  ]);
+  try {
+    rmSync(plist);
+  } catch {
+    // Not there.
+  }
+  say("Daily orca-box updates are off.");
+}
+
+/**
+ * The daily update on Windows: a task in the Task Scheduler.
+ *
+ * The task runs as this user, so it needs no administrator rights.
+ */
+function setAutoUpdateOnWindows(mode: "on" | "off"): void {
+  const exe = join(paths().data, "orca-box.exe");
+
+  if (mode === "on") {
+    // The program is one file with several commands: the name of the
+    // command is the first argument.
+    const command = `"${exe}" orca-box-update --quiet`;
+    const done = runIfPresent("schtasks", [
+      "/create",
+      "/tn",
+      WINDOWS_TASK,
+      "/tr",
+      command,
+      "/sc",
+      "daily",
+      "/st",
+      "04:30",
+      "/f",
+    ]);
+    if (done !== 0) {
+      die("couldn't add the task to the Task Scheduler; run orca-box-update yourself instead");
+    }
+    say("Daily orca-box updates are on (orca-box-update --disable-auto to stop).");
+    return;
+  }
+
+  runIfPresent("schtasks", ["/delete", "/tn", WINDOWS_TASK, "/f"]);
+  say("Daily orca-box updates are off.");
+}
+
+/** Take the daily update away, whichever way it was set up. */
+export function removeAutoUpdate(): void {
+  if (isMac()) {
+    setAutoUpdateOnMac("off");
+    return;
+  }
+  if (isWindows()) {
+    setAutoUpdateOnWindows("off");
+    return;
+  }
+  setAutoUpdate("off");
+}
+
 /** Is systemd here? Not on OpenRC systems, or in a plain container. */
 function hasSystemctl(): boolean {
+  if (isMac()) return false;
   try {
     return (
       hasCommand("systemctl")
@@ -157,14 +298,15 @@ export async function update(options: UpdateOptions): Promise<void> {
     return;
   }
 
-  if (!hasCommand("curl")) {
-    die("curl not found");
-  }
-
   const { data } = paths();
   mkdirSync(data, { recursive: true });
-  const tmp = join(data, `.update.${process.pid}`);
-  const installed = join(data, "orca-box");
+  // The name has to end in .exe on Windows, or the program cannot be
+  // started while it is checked.
+  const tmp = join(
+    data,
+    isWindows() ? `.update.${process.pid}.exe` : `.update.${process.pid}`,
+  );
+  const installed = paths().program;
 
   try {
     await downloadLatest(tmp);

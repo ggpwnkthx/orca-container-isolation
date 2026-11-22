@@ -7,6 +7,14 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0]
+
+### Added
+- The self-update fetches the release asset for the machine it runs
+  on, instead of the Linux one.
+- The daily update is a launchd agent on macOS and a task in the
+  Task Scheduler on Windows, instead of a systemd timer.
+
 ## [1.1.1]
 
 ### Fixed
