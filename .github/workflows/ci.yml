@@ -32,6 +32,21 @@ jobs:
         run: |
           ./dist/orca-box-linux-x64 orca-box --help > /dev/null
           ./dist/orca-box-linux-x64 orca-box-setup --help > /dev/null
+          ./dist/orca-box-linux-x64 --version
+
+      # Every released platform, and the build has to be reproducible: the
+      # release attaches these binaries, so a build that differs between
+      # runs would make the published checksums wrong.
+      - name: Build every platform
+        run: ./build.sh --all
+
+      - name: Check the build is reproducible
+        run: ./build.sh --check
+
+      - name: Check the musl build is musl
+        run: |
+          readelf -l dist/orca-box-linux-x64-musl | grep -q "ld-musl" \
+            || (echo "the musl build wants the glibc loader" >&2; exit 1)
 
   shell:
     runs-on: ubuntu-latest
