@@ -6,11 +6,10 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { configHome } from "./platform.ts";
 
-export const CONFIG_DIR =
-  process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
+export const CONFIG_DIR = configHome();
 export const CONFIG_FILE_DIR = join(CONFIG_DIR, "orca-box");
 export const CONFIG_FILE = join(CONFIG_FILE_DIR, "config");
 
@@ -23,6 +22,7 @@ export const SETTINGS_KEYS = [
   "ORCA_BOX_HOME_VOLUME",
   "ORCA_BOX_SKILLS",
   "ORCA_BOX_GH_AUTH",
+  "ORCA_BOX_NO_NEW_PRIVILEGES",
 ] as const;
 
 export type SettingKey = (typeof SETTINGS_KEYS)[number];
@@ -35,6 +35,9 @@ const DEFAULTS: Record<SettingKey, string> = {
   ORCA_BOX_HOME_VOLUME: "orca-agent-home",
   ORCA_BOX_SKILLS: "1",
   ORCA_BOX_GH_AUTH: "0",
+  // Engines that don't know the option (some Docker Desktop versions)
+  // turn this off; the setup checks.
+  ORCA_BOX_NO_NEW_PRIVILEGES: "1",
 };
 
 const known = new Set<string>(SETTINGS_KEYS);

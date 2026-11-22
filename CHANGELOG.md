@@ -7,6 +7,13 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.1]
+
+### Changed
+- The settings and Orca's own data are found where the platform
+  keeps them: the XDG folders, ~/Library/Application Support or
+  %APPDATA%.
+
 ## [1.3.0]
 
 ### Added

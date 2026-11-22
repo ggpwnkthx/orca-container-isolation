@@ -12,7 +12,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { die } from "./output.ts";
+import { configHome, isMac, isWindows } from "./platform.ts";
 
 const AGENTS = ["claude", "codex", "pi"] as const;
 type Agent = (typeof AGENTS)[number];
@@ -24,20 +24,64 @@ interface RuntimeFile {
   transports?: { kind?: string; endpoint?: string }[];
 }
 
+/** The kinds of transport Orca may publish. */
+const TRANSPORT_KINDS = ["unix", "named-pipe"];
+
 export interface SavedCommands {
   [agent: string]: string;
 }
 
-/** Where Orca keeps its user data. */
+/**
+ * Where Orca keeps its user data.
+ *
+ * The app writes orca-runtime.json there. On macOS that is the Library
+ * folder; on Linux it is the XDG config folder. Orca may also be told to
+ * use another place, so that one is checked first.
+ */
 export function userDataDir(): string {
   if (process.env.ORCA_USER_DATA_PATH) return process.env.ORCA_USER_DATA_PATH;
-  const xdg = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
-  return join(xdg, "orca");
+  return defaultUserDataDir();
+}
+
+/** The default place Orca's user data lives on this platform. */
+function defaultUserDataDir(): string {
+  if (isMac()) {
+    return join(homedir(), "Library", "Application Support", "orca");
+  }
+  if (isWindows()) {
+    // Electron's own folder: %APPDATA%\orca
+    const roaming = process.env.APPDATA ?? join(homedir(), "AppData", "Roaming");
+    return join(roaming, "orca");
+  }
+  return join(configHome(), "orca");
+}
+
+/** The places Orca's runtime file might be, most likely first. */
+function userDataDirs(): string[] {
+  const dirs: string[] = [];
+  if (process.env.ORCA_USER_DATA_PATH) dirs.push(process.env.ORCA_USER_DATA_PATH);
+  dirs.push(defaultUserDataDir());
+  if (!isMac() && !isWindows()) {
+    // Orca built before the macOS layout, or started with an older
+    // config home, may still write here.
+    dirs.push(join(homedir(), ".config", "orca"));
+  } else if (isMac()) {
+    dirs.push(join(homedir(), "Library", "Application Support", "Orca"));
+  } else {
+    const local = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
+    dirs.push(join(local, "orca"));
+  }
+  return dirs;
 }
 
 /** Orca's runtime file, which says where its socket is. */
 export function runtimeFile(): string {
-  return join(userDataDir(), "orca-runtime.json");
+  const dirs = userDataDirs();
+  for (const dir of dirs) {
+    const file = join(dir, "orca-runtime.json");
+    if (existsSync(file)) return file;
+  }
+  return join(dirs[0]!, "orca-runtime.json");
 }
 
 /** The PID of the running Orca app, and the AppImage it was started from. */
@@ -76,7 +120,31 @@ export function runningOrca(): { pid: number; appimage: string } {
   } catch {
     // Not readable: leave it empty.
   }
+  if (!appimage) {
+    // macOS has no /proc, and the app is a bundle rather than an
+    // AppImage; ask the process list instead.
+    appimage = commandOf(pid);
+  }
   return { pid, appimage };
+}
+
+/**
+ * The command line of a process, as it was started.
+ *
+ * Linux has /proc; macOS has `ps`.
+ */
+function commandOf(pid: number): string {
+  try {
+    const proc = Bun.spawnSync(["ps", "-o", "command=", "-p", String(pid)], {
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+    if (proc.exitCode !== 0) return "";
+    return new TextDecoder().decode(proc.stdout).trim();
+  } catch {
+    return "";
+  }
 }
 
 /** Read Orca's runtime file, failing with a clear message if it isn't there. */
@@ -86,9 +154,8 @@ function readRuntime(): RuntimeFile {
   try {
     meta = JSON.parse(readFileSync(file, "utf8")) as RuntimeFile;
   } catch {
-    die(
-      `orca-box-configure-orca: Orca isn't running (no ${file}). Start Orca and run this again.`,
-      3,
+    throw new Error(
+      `Orca isn't running (no ${file}). Start Orca and run this again.`,
     );
   }
 
@@ -99,9 +166,8 @@ function readRuntime(): RuntimeFile {
     if (code === "EPERM") {
       // It exists, we just may not signal it.
     } else {
-      die(
-        "orca-box-configure-orca: Orca isn't running (stale runtime file). Start Orca and run this again.",
-        3,
+      throw new Error(
+        "Orca isn't running (stale runtime file). Start Orca and run this again.",
       );
     }
   }
@@ -123,27 +189,43 @@ function endpointAndToken(): { endpoint: string; token: string } {
       ? [{ kind: meta.transport, endpoint: (meta as { endpoint?: string }).endpoint }]
       : [];
 
-  const endpoint = transports.find((t) => t?.kind === "unix")?.endpoint;
+  // On Linux and macOS Orca listens on a unix socket; on Windows it
+  // listens on a named pipe.
+  const endpoint = transports.find((t) => TRANSPORT_KINDS.includes(t?.kind ?? ""))?.endpoint;
   const token = meta.authToken ?? "";
   if (!endpoint || !token) {
-    die(
-      `orca-box-configure-orca: Orca's runtime file ${runtimeFile()} has no local socket or token.`,
-      3,
+    throw new Error(
+      `Orca's runtime file ${runtimeFile()} has no local socket or token.`,
     );
   }
 
   const uid = process.getuid?.() ?? 0;
-  const shortPrefix = `/tmp/.orca-daemon-${uid}/`;
-  if (endpoint.startsWith(shortPrefix)) {
+  // macOS keeps /tmp as a link to /private/tmp, so the socket can be
+  // under either name. Windows has named pipes, which have their own
+  // permissions, so there is nothing to check there.
+  const shortPrefixes = [
+    `/tmp/.orca-daemon-${uid}/`,
+    `/private/tmp/.orca-daemon-${uid}/`,
+  ];
+  const shortPrefix = isWindows()
+    ? undefined
+    : shortPrefixes.find((prefix) => endpoint.startsWith(prefix));
+  if (shortPrefix) {
     for (const dir of [
       endpoint.slice(0, endpoint.lastIndexOf("/")),
       join(endpoint.slice(0, endpoint.lastIndexOf("/")), ".."),
     ]) {
-      const st = lstatSync(dir);
-      if (!st.isDirectory() || st.uid !== uid || (st.mode & 0o077) !== 0) {
-        die(
-          `orca-box-configure-orca: Orca's socket folder ${dir} isn't private to you; not connecting.`,
-          3,
+      try {
+        const st = lstatSync(dir);
+        if (!st.isDirectory() || st.uid !== uid || (st.mode & 0o077) !== 0) {
+          throw new Error(
+            `Orca's socket folder ${dir} isn't private to you; not connecting.`,
+          );
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message.includes("socket folder")) throw err;
+        throw new Error(
+          `Orca's socket folder ${dir} isn't there; not connecting.`,
         );
       }
     }
@@ -199,7 +281,7 @@ async function call(method: string, params?: unknown): Promise<Record<string, un
       reject(new Error("Orca closed the connection before answering. Try again."));
     });
   }).catch((err: Error) => {
-    die(`orca-box-configure-orca: couldn't reach Orca (${err.message}). Is it running?`, 3);
+    throw new Error(`couldn't reach Orca (${err.message}). Is it running?`);
   });
 
   return reply;
@@ -221,7 +303,9 @@ async function mutate(params: Record<string, unknown>): Promise<void> {
   const frame = await call("settings.mutateAgentLaunch", params);
   if (!frame.ok) {
     const err = (frame.error ?? {}) as { message?: string };
-    die(`orca-box-configure-orca: Orca rejected ${JSON.stringify(params)}: ${err.message ?? err}`);
+    throw new Error(
+      `Orca rejected ${JSON.stringify(params)}: ${err.message ?? err}`,
+    );
   }
 }
 
@@ -259,8 +343,11 @@ export interface ConfigureOptions {
  *
  * The commands that were there before are remembered in savedPath, so
  * --unset can restore them.
+ *
+ * Returns whether it worked. It does not stop the program: the caller
+ * decides what to do about it.
  */
-export async function configure(options: ConfigureOptions): Promise<void> {
+export async function configure(options: ConfigureOptions): Promise<boolean> {
   const { action, yolo, boxPath, savedPath, prefix } = options;
 
   // What the agents had before we took over.
@@ -323,5 +410,5 @@ export async function configure(options: ConfigureOptions): Promise<void> {
       // Already gone.
     }
   }
-  process.exit(failed ? 1 : 0);
+  return !failed;
 }
