@@ -7,6 +7,13 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0]
+
+### Added
+- The Orca app is installed the way the platform does it: an
+  AppImage on Linux, an application bundle from the release's disk
+  image on macOS, and the release's installer on Windows.
+
 ## [1.2.1]
 
 ### Fixed

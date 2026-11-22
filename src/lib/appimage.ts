@@ -1,28 +1,36 @@
 /**
- * Installing the Orca app.
+ * Installing the Orca app on Linux.
  *
  * The AppImage comes from a GitHub release; its checksum is checked against
  * the one GitHub publishes, or else against the SHA-512 in the release's
  * latest-linux.yml (what Orca's own updater uses). With neither available
  * it refuses, unless ORCA_BOX_ALLOW_UNVERIFIED=1.
+ *
+ * On macOS the app is a bundle in a disk image; see macapp.ts.
  */
 
 import { createHash } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { dataHome } from "./platform.ts";
+import { dataWork } from "./paths.ts";
+import { releaseInfo as releaseInfoFor } from "./release.ts";
 import { die, say, warn } from "./output.ts";
 import { hasCommand } from "./which.ts";
 
 const REPO = "stablyai/orca";
 const DESKTOP_ID = "orca-ide";
-
-export interface AppImageInfo {
-  version: string;
-  url: string;
-  sha256: string;
-  ymlUrl: string;
-}
 
 /** Where the app and its menu entry live. */
 export function appPaths(): {
@@ -32,14 +40,13 @@ export function appPaths(): {
   icons: string;
   desktopFile: string;
 } {
-  const dataHome = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
   const dir = process.env.ORCA_APPIMAGE_DIR ?? join(homedir(), "AppImages");
   return {
     dir,
     dest: join(dir, "orca.AppImage"),
-    apps: join(dataHome, "applications"),
-    icons: join(dataHome, "icons", "hicolor"),
-    desktopFile: join(dataHome, "applications", `${DESKTOP_ID}.desktop`),
+    apps: join(dataHome(), "applications"),
+    icons: join(dataHome(), "icons", "hicolor"),
+    desktopFile: join(dataHome(), "applications", `${DESKTOP_ID}.desktop`),
   };
 }
 
@@ -50,31 +57,6 @@ export function assetNames(): { asset: string; yml: string } {
     return { asset: "orca-linux-arm64.AppImage", yml: "latest-linux-arm64.yml" };
   }
   return { asset: "orca-linux.AppImage", yml: "latest-linux.yml" };
-}
-
-/**
- * Look up the latest release.
- *
- * Returns the tag, the AppImage's URL, its SHA-256 (if the release
- * publishes one) and the URL of the release's latest-linux.yml (if any).
- */
-export async function releaseInfo(release: {
-  tag_name?: string;
-  assets?: { name?: string; browser_download_url?: string; digest?: string }[];
-}): Promise<AppImageInfo> {
-  const { asset, yml } = assetNames();
-  const assets = new Map(
-    (release.assets ?? []).map((a) => [a.name ?? "", a] as const),
-  );
-  const app = assets.get(asset);
-  const ymlAsset = assets.get(yml);
-  const digest = app?.digest ?? "";
-  return {
-    version: release.tag_name ?? "",
-    url: app?.browser_download_url ?? "",
-    sha256: digest.startsWith("sha256:") ? digest.slice("sha256:".length) : "",
-    ymlUrl: ymlAsset?.browser_download_url ?? "",
-  };
 }
 
 /** Fetch a URL, following redirects. Returns the response body. */
@@ -147,8 +129,187 @@ export function refreshMenus(apps: string): void {
   }
 }
 
+/**
+ * Install the Orca app from a release, or from an AppImage the user has.
+ *
+ * This is the Linux half; app.ts picks between this and the macOS one.
+ */
+export async function installAppImage(from: string): Promise<void> {
+  const { asset, yml } = assetNames();
+  const { dir, dest } = appPaths();
+  const api = process.env.ORCA_BOX_GITHUB_API ?? "https://api.github.com";
+
+  mkdirSync(dir, { recursive: true });
+  const work = join(dataWork(), "appimage");
+  mkdirSync(work, { recursive: true });
+  const newApp = join(work, "new.AppImage");
+
+  let version = "";
+
+  if (from) {
+    if (!existsSync(from)) die(`no such file: ${from}`);
+    copyFileSync(from, newApp);
+    say(`Installing ${from}`);
+  } else {
+    say("Looking up the latest Orca release");
+    let release: unknown;
+    try {
+      release = JSON.parse(
+        await fetchText(`${api}/repos/${REPO}/releases/latest`),
+      );
+    } catch {
+      die(
+        "couldn't reach GitHub's API. Download Orca from https://orca.dev and run: orca-box-install-orca --from FILE",
+      );
+    }
+    const info = await releaseInfoFor(
+      release as Parameters<typeof releaseInfoFor>[0],
+      assetNames(),
+    );
+    version = info.version;
+    if (!info.url) {
+      die(
+        `release ${version || "latest"} has no ${asset}. Download Orca from https://orca.dev and run: orca-box-install-orca --from FILE`,
+      );
+    }
+
+    // Already have exactly this build? (Orca's updater may have got there first.)
+    if (info.sha256 && existsSync(dest) && sha256File(dest) === info.sha256) {
+      say(`Orca ${version} is already installed at ${dest}`);
+    } else {
+      say(`Downloading Orca ${version} (${asset})`);
+      try {
+        await fetchToFile(info.url, newApp);
+      } catch (err) {
+        die(`couldn't download Orca: ${(err as Error).message}`);
+      }
+
+      if (info.sha256) {
+        if (sha256File(newApp) !== info.sha256) {
+          die("SHA-256 of the download doesn't match GitHub's digest; not installing");
+        }
+        say("Verified SHA-256 against GitHub's digest");
+      } else if (info.ymlUrl) {
+        let ymlText = "";
+        try {
+          ymlText = await fetchText(info.ymlUrl);
+        } catch {
+          ymlText = "";
+        }
+        if (ymlText) {
+          const want = sha512FromYml(ymlText, asset);
+          if (!want) {
+            die(`no sha512 for this file in ${yml}; not installing`);
+          }
+          if (sha512FileBase64(newApp) !== want) {
+            die(`the download doesn't match the SHA-512 in ${yml}; not installing`);
+          }
+          say(`Verified SHA-512 against ${yml}`);
+        } else if (process.env.ORCA_BOX_ALLOW_UNVERIFIED === "1") {
+          warn(
+            `no checksum published for ${asset}; installing unverified (ORCA_BOX_ALLOW_UNVERIFIED=1)`,
+          );
+        } else {
+          die(
+            `no checksum published for ${asset}, so it can't be verified. Set ORCA_BOX_ALLOW_UNVERIFIED=1 to install anyway.`,
+          );
+        }
+      } else if (process.env.ORCA_BOX_ALLOW_UNVERIFIED === "1") {
+        warn(
+          `no checksum published for ${asset}; installing unverified (ORCA_BOX_ALLOW_UNVERIFIED=1)`,
+        );
+      } else {
+        die(
+          `no checksum published for ${asset}, so it can't be verified. Set ORCA_BOX_ALLOW_UNVERIFIED=1 to install anyway.`,
+        );
+      }
+    }
+  }
+
+  if (existsSync(newApp)) {
+    // Is it even an AppImage?
+    const head = readFileSync(newApp).subarray(0, 4);
+    if (head[0] !== 0x7f || head[1] !== 0x45 || head[2] !== 0x4c || head[3] !== 0x46) {
+      die("that file isn't an AppImage (not an ELF executable)");
+    }
+    chmodSync(newApp, 0o755);
+    // Same-folder rename: atomic, and a running Orca keeps its old copy open.
+    const tmp = join(dir, `.orca.AppImage.${process.pid}`);
+    copyFileSync(newApp, tmp);
+    chmodSync(tmp, 0o755);
+    renameSync(tmp, dest);
+    say(`Installed ${dest}`);
+  }
+
+  // --- menu entry, from the .desktop file and icons inside the AppImage ---
+  say("Adding Orca to the application menu");
+  const extract = join(work, "extract");
+  mkdirSync(extract, { recursive: true });
+  for (const pattern of ["*.desktop", "usr/share/icons/*", ".DirIcon"]) {
+    Bun.spawnSync([dest, "--appimage-extract", pattern], {
+      cwd: extract,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+  }
+  const root = join(extract, "squashfs-root");
+
+  // An AppImage mounts itself with FUSE to run. Where FUSE isn't there,
+  // extract it once and run the extracted copy instead: that works
+  // everywhere, at the cost of some disk.
+  let program = dest;
+  if (!hasFuse()) {
+    const unpacked = `${dest}.d`;
+    say("This system has no FUSE, so Orca is extracted instead of mounted");
+    rmSync(unpacked, { recursive: true, force: true });
+    mkdirSync(unpacked, { recursive: true });
+    const done = Bun.spawnSync([dest, "--appimage-extract"], {
+      cwd: unpacked,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const appRun = join(unpacked, "squashfs-root", "AppRun");
+    if (done.exitCode === 0 && existsSync(appRun)) {
+      chmodSync(appRun, 0o755);
+      program = appRun;
+    } else {
+      rmSync(unpacked, { recursive: true, force: true });
+      warn(
+        "couldn't extract Orca, and this system has no FUSE to mount it with;\n" +
+          "    install fuse3 (or fuse) with your package manager, then rerun\n" +
+          "    orca-box-install-orca",
+      );
+    }
+  }
+
+  if (!installIcons(root) && !installFallbackIcon(root)) {
+    warn("couldn't extract Orca's icon; the menu entry will use a generic one");
+  }
+
+  const { desktopFile } = appPaths();
+  if (existsSync(desktopFile) && !readFileSync(desktopFile, "utf8").includes("X-Orca-Box=true")) {
+    copyFileSync(desktopFile, `${desktopFile}.bak`);
+    warn(`replaced an existing ${desktopFile} (saved as ${desktopFile}.bak)`);
+  }
+
+  let embedded = "";
+  try {
+    for (const entry of readdirSync(root)) {
+      if (entry.endsWith(".desktop")) {
+        embedded = join(root, entry);
+        break;
+      }
+    }
+  } catch {
+    embedded = "";
+  }
+  writeDesktopFile(embedded, dest, "orca-ide", version, program);
+
+  rmSync(work, { recursive: true, force: true });
+}
+
 /** Remove the app and its menu entry. */
-export function removeApp(): void {
+export function removeAppImage(): void {
   const { dest, apps, icons, desktopFile } = appPaths();
 
   if (existsSync(desktopFile)) {
@@ -156,7 +317,7 @@ export function removeApp(): void {
     if (!content.includes("X-Orca-Box=true")) {
       warn(`${desktopFile} wasn't created by orca-box; leaving it`);
     } else {
-      Bun.spawnSync(["rm", "-f", desktopFile]);
+      rmSync(desktopFile, { force: true });
     }
   }
   // The icons this installer put there.
@@ -167,9 +328,9 @@ export function removeApp(): void {
     `*/apps/${DESKTOP_ID}.*`,
     "-delete",
   ]);
-  Bun.spawnSync(["rm", "-f", dest]);
+  rmSync(dest, { force: true });
   // The extracted copy, on a system without FUSE.
-  Bun.spawnSync(["rm", "-rf", `${dest}.d`]);
+  rmSync(`${dest}.d`, { recursive: true, force: true });
   refreshMenus(apps);
   say(`Removed ${dest} and its menu entry (Orca's settings in ~/.config/orca are untouched).`);
 }
@@ -338,3 +499,13 @@ export function installFallbackIcon(root: string): boolean {
   copyFileSync(dirIcon, join(dest, `${DESKTOP_ID}.png`));
   return true;
 }
+
+// The names the rest of the program used before the app moved into modules
+// of their own; they go when the last caller moves over.
+export async function releaseInfo(release: {
+  tag_name?: string;
+  assets?: { name?: string; browser_download_url?: string; digest?: string }[];
+}): Promise<{ version: string; url: string; sha256: string; ymlUrl: string }> {
+  return releaseInfoFor(release, assetNames());
+}
+export const removeApp = removeAppImage;
