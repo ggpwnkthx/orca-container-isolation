@@ -72,7 +72,39 @@ Each Orca workspace gets its own container, built from
 
 It cannot see the rest of your home directory, `~/.ssh`, or other repos.
 
-### The container engine
+## What it needs
+
+The host needs very little:
+
+| What | Why | If it's missing |
+| --- | --- | --- |
+| `git` | finding the worktree | the installer says so |
+| Podman **or** Docker | running the boxes | the installer says so |
+| `flock` | one launch per workspace | boxes still work, but two can start at once |
+
+Everything else is optional and checked where it's used: `curl`,
+`systemctl` (for the daily update timer), `update-desktop-database` and
+`desktop-file-validate` (for the menu entry), `newuidmap` and a
+`/etc/subuid` range (for rootless Podman). None of them are needed to
+*install* orca-box, and missing ones are reported, never fatal.
+
+Two things differ by distribution, and both are handled:
+
+- **glibc or musl.** The installer picks the matching build, so Alpine
+  works as well as Debian, Ubuntu, Fedora, Arch and openSUSE.
+- **SELinux or AppArmor.** On SELinux systems (Fedora, Bazzite) the
+  bind mounts get the `z` option so the container can read them; on
+  AppArmor systems (Debian, Ubuntu) it isn't needed and isn't added.
+
+Rootless Podman also needs a range of subordinate ids for your user. If
+`/etc/subuid` doesn't have one, the installer says so and tells you how to
+add it:
+
+```sh
+sudo usermod --add-subuids $(id -u)-65536 --add-subgids $(id -g)-65536 $(id -un)
+```
+
+## The container engine
 
 Podman if it works, otherwise Docker. Both are fine; the difference is in how
 your user maps onto the container's (`userns=keep-id` for Podman, your own
@@ -110,6 +142,7 @@ src/
     update.ts           self-update
     invoke.ts           which command was invoked
     output.ts           say / warn / die
+    which.ts            finding programs on PATH
   assets/
     skill-sync.ts       embeds the Containerfile and the skill-sync script
 container/              the Containerfile and the skill-sync script

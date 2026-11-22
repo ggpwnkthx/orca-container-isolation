@@ -12,6 +12,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSy
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { die, say, warn } from "./output.ts";
+import { hasCommand } from "./which.ts";
 
 const REPO = "stablyai/orca";
 const DESKTOP_ID = "orca-ide";
@@ -133,25 +134,16 @@ export function sha512FileBase64(path: string): string {
 export function refreshMenus(apps: string): void {
   // (No icon-theme.cache in your own icon folder: one that goes stale
   //  hides other apps' new icons.)
-  const database = Bun.spawnSync(["which", "update-desktop-database"], {
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-  if (database.exitCode === 0) {
+  if (hasCommand("update-desktop-database")) {
     Bun.spawnSync(["update-desktop-database", "-q", apps], {
       stdout: "ignore",
       stderr: "ignore",
     });
   }
   for (const tool of ["kbuildsycoca6", "kbuildsycoca5"]) {
-    const found = Bun.spawnSync(["which", tool], {
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    if (found.exitCode === 0) {
-      Bun.spawnSync([tool], { stdout: "ignore", stderr: "ignore" });
-      break;
-    }
+    if (!hasCommand(tool)) continue;
+    Bun.spawnSync([tool], { stdout: "ignore", stderr: "ignore" });
+    break;
   }
 }
 
@@ -176,8 +168,49 @@ export function removeApp(): void {
     "-delete",
   ]);
   Bun.spawnSync(["rm", "-f", dest]);
+  // The extracted copy, on a system without FUSE.
+  Bun.spawnSync(["rm", "-rf", `${dest}.d`]);
   refreshMenus(apps);
   say(`Removed ${dest} and its menu entry (Orca's settings in ~/.config/orca are untouched).`);
+}
+
+/**
+ * Can this machine run an AppImage directly?
+ *
+ * An AppImage mounts itself with FUSE. Extracting one doesn't need FUSE, so
+ * the installer can fall back to extracting it on a system without it --
+ * but running the app later does need it, unless it's extracted.
+ */
+export function hasFuse(): boolean {
+  try {
+    if (!existsSync("/dev/fuse")) return false;
+  } catch {
+    return false;
+  }
+  // The AppImage runtime links against the system's fuse library.
+  const dirs = [
+    ...(process.env.LD_LIBRARY_PATH ?? "").split(":"),
+    "/lib/x86_64-linux-gnu",
+    "/lib/aarch64-linux-gnu",
+    "/lib64",
+    "/usr/lib/x86_64-linux-gnu",
+    "/usr/lib/aarch64-linux-gnu",
+    "/usr/lib64",
+    "/usr/lib",
+    "/lib",
+  ];
+  const names = ["libfuse.so.2", "libfuse.so.3", "libfuse3.so.3"];
+  for (const dir of dirs) {
+    if (!dir) continue;
+    for (const name of names) {
+      try {
+        if (existsSync(join(dir, name))) return true;
+      } catch {
+        // Keep looking.
+      }
+    }
+  }
+  return false;
 }
 
 /**
@@ -186,12 +219,16 @@ export function removeApp(): void {
  * The AppImage's own .desktop file is the source of truth; we replace the
  * program with the path we installed it to, and point the icon at the one
  * we extracted.
+ *
+ * `program` is what actually gets run: the AppImage itself normally, or
+ * the extracted copy on a system without FUSE.
  */
 export function writeDesktopFile(
   embeddedPath: string,
   dest: string,
   icon: string,
   version: string,
+  program = dest,
 ): void {
   const { desktopFile, apps } = appPaths();
   let lines: string[] = [];
@@ -216,7 +253,7 @@ export function writeDesktopFile(
   }
 
   // Quote the path for the Exec line: it can contain spaces.
-  const quoted = `"${dest.replace(/([`$\\])/g, "\\$1")}"`;
+  const programQuoted = `"${program.replace(/([`$\\])/g, "\\$1")}"`;
   const result: string[] = [];
   for (let line of lines) {
     if (line.startsWith("[")) {
@@ -226,10 +263,10 @@ export function writeDesktopFile(
       const key = line.slice(0, eq).trim();
       const value = line.slice(eq + 1);
       if (key === "Exec") {
-        // Replace the program (AppRun) with the installed AppImage; keep
-        // its arguments.
+        // Replace the program (AppRun) with the installed app; keep its
+        // arguments.
         const parts = value.trim().split(/\s+/, 2);
-        line = `Exec=${quoted}${parts.length > 1 ? ` ${parts[1]}` : " %U"}`;
+        line = `Exec=${programQuoted}${parts.length > 1 ? ` ${parts[1]}` : " %U"}`;
       } else if (key === "TryExec" || key.startsWith("X-AppImage") || key === "X-Orca-Box") {
         continue;
       } else if (key === "Icon") {
@@ -238,7 +275,7 @@ export function writeDesktopFile(
     }
     result.push(line);
     if (line.trim() === "[Desktop Entry]") {
-      result.push(`TryExec=${dest}`);
+      result.push(`TryExec=${program}`);
       result.push("X-Orca-Box=true");
       if (version) {
         result.push(`X-AppImage-Version=${version.replace(/^v/, "")}`);
@@ -254,11 +291,7 @@ export function writeDesktopFile(
   writeFileSync(desktopFile, `${result.join("\n")}\n`);
   chmodSync(desktopFile, 0o644);
 
-  const validate = Bun.spawnSync(["which", "desktop-file-validate"], {
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-  if (validate.exitCode === 0) {
+  if (hasCommand("desktop-file-validate")) {
     Bun.spawnSync(["desktop-file-validate", desktopFile], {
       stdout: "ignore",
       stderr: "inherit",

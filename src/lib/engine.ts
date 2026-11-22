@@ -9,6 +9,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_FILE_DIR, setting } from "./config.ts";
 import { die, warn } from "./output.ts";
+import { hasCommand } from "./which.ts";
 
 export type EngineMode = "podman" | "docker" | "docker-rootless";
 
@@ -41,7 +42,7 @@ export function dockerIsRootless(): boolean {
 }
 
 function engineHelp(): void {
-  const has = (bin: string) => commandWorks("which", [bin]);
+  const has = (bin: string) => hasCommand(bin);
   if (has("docker")) {
     process.stderr.write(
       "orca-box: Docker is installed but not usable by your user. Start it with\n" +
@@ -100,7 +101,7 @@ export function initEngine(force = false): EngineMode {
   }
 
   const bin = engineBinary();
-  if (!commandWorks("which", [bin])) {
+  if (!hasCommand(bin)) {
     die(
       `orca-box: ${bin} not found (recorded in ${engineFile}); rerun orca-box-setup`,
     );

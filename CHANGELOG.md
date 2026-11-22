@@ -15,6 +15,17 @@ and this project uses [semantic versioning](https://semver.org/).
   mock Orca daemon, so it needs nothing installed.
 - `orca-box-update` now reports versions rather than hashes.
 
+### Fixed
+- The agent image builds on arm64: the GitHub CLI was pinned to the amd64
+  build, so `gh` in the box was the wrong architecture.
+- `orca-box-update --disable-auto` no longer fails on a system without
+  systemd.
+- Finding a program no longer shells out to `which`, which isn't installed
+  on every system, and a missing program no longer crashes the program.
+- The installer no longer asks for `python3`; nothing needs it any more.
+- On a system without FUSE, Orca is extracted instead of mounted, so the
+  menu entry works.
+
 ### Changed
 - **The project moved from a gist to this repository.**
 - **The implementation is now TypeScript, running on Bun.** The bash
@@ -26,6 +37,8 @@ and this project uses [semantic versioning](https://semver.org/).
   Nothing needs `sudo`.
 - `orca-box-update` fetches the latest *release* rather than the latest
   revision of a branch, so a broken `main` can never reach users.
+- musl builds (Alpine) are released alongside the glibc ones, and the
+  installer picks the right one.
 
 ## [1.0.0]
 

@@ -52,5 +52,7 @@ jobs:
             --generate-notes \
             dist/orca-box-linux-x64 \
             dist/orca-box-linux-arm64 \
+            dist/orca-box-linux-x64-musl \
+            dist/orca-box-linux-arm64-musl \
             dist/SHA256SUMS \
             install.sh

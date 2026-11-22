@@ -14,6 +14,8 @@ import { join } from "node:path";
 
 import { sha512FromYml, releaseInfo, assetNames } from "../src/lib/appimage.ts";
 import { invokeName, invokeNameFrom } from "../src/lib/invoke.ts";
+import { hasCommand } from "../src/lib/which.ts";
+import { hasSubidRange } from "../src/lib/setup.ts";
 
 const MOCKS = join(import.meta.dir, "..", "tests", "mocks");
 
@@ -291,6 +293,54 @@ describe("talking to Orca", () => {
     } finally {
       daemon.kill();
     }
+  });
+});
+
+describe("finding programs on PATH", () => {
+  test("it finds a program that is there", () => {
+    // sh is in every POSIX system.
+    expect(hasCommand("sh")).toBe(true);
+  });
+
+  test("it does not find a program that isn't", () => {
+    expect(hasCommand("orca-box-not-a-real-program")).toBe(false);
+  });
+
+  test("it does not need `which` to be installed", () => {
+    // The point of doing it ourselves: `which` isn't on every system.
+    const saved = process.env.PATH;
+    try {
+      process.env.PATH = "/nonexistent";
+      expect(hasCommand("sh")).toBe(false);
+    } finally {
+      process.env.PATH = saved;
+    }
+  });
+
+  test("a directory is not a program", () => {
+    expect(hasCommand("/tmp")).toBe(false);
+  });
+});
+
+describe("the subordinate id ranges", () => {
+  test("it reads /etc/subuid and /etc/subgid", () => {
+    // Both are name:start:count lines. Whatever this machine has, the
+    // answers must be booleans and must agree with the files.
+    const uid = process.getuid?.() ?? -1;
+    const subuid = hasSubidRange("subuid");
+    const subgid = hasSubidRange("subgid");
+    expect(typeof subuid).toBe("boolean");
+    expect(typeof subgid).toBe("boolean");
+
+    // If the file names our uid, the range has to be there.
+    const text = readFileSync("/etc/subuid", "utf8");
+    const hasOurs = text
+      .split("\n")
+      .some((line) => {
+        const [name, , count] = line.split(":");
+        return count && Number(count) > 0 && Number(name) === uid;
+      });
+    if (hasOurs) expect(subuid).toBe(true);
   });
 });
 

@@ -15,14 +15,24 @@ RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent \
 
 # GitHub CLI, for agents that work with issues, pull requests and gists. From
 # the official release (Debian's package is years behind). Pinned, so the
-# build is reproducible: bump the version and the checksum to update.
+# build is reproducible: bump the version and the checksums to update.
+#
+# The architecture is chosen inside the container, with uname -m, rather than
+# from a build argument: build arguments like TARGETARCH need buildkit, and
+# a plain "podman build" doesn't set them.
 ARG GH_VERSION=2.105.0
-RUN curl -fsSL -o /tmp/gh.tar.gz \
-      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
- && echo "79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f  /tmp/gh.tar.gz" | sha256sum -c - \
- && tar -xzf /tmp/gh.tar.gz -C /tmp \
- && install -m 0755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh \
- && rm -rf /tmp/gh.tar.gz "/tmp/gh_${GH_VERSION}_linux_amd64"
+RUN set -eux; \
+    case "$(uname -m)" in \
+      x86_64)  gh_arch=amd64; gh_sha=79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f ;; \
+      aarch64|arm64) gh_arch=arm64; gh_sha=b1278c75107423d818f1937fd92cafc9e5e9b606631568f68d7fb816f5885a02 ;; \
+      *) echo "no GitHub CLI build for $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/gh.tar.gz \
+      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz"; \
+    echo "${gh_sha}  /tmp/gh.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/gh.tar.gz -C /tmp; \
+    install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh; \
+    rm -rf /tmp/gh.tar.gz "/tmp/gh_${GH_VERSION}_linux_${gh_arch}"
 
 ENV DISABLE_AUTOUPDATER=1
 

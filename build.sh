@@ -29,9 +29,15 @@ fi
 }
 
 # The platforms we release for.
+#
+# The musl builds are for Alpine and other musl systems; the others are
+# for glibc systems. A glibc build needs glibc 2.17 or newer, which covers
+# every glibc distribution still in use.
 TARGETS=(
   "bun-linux-x64:orca-box-linux-x64"
   "bun-linux-arm64:orca-box-linux-arm64"
+  "bun-linux-x64-musl:orca-box-linux-x64-musl"
+  "bun-linux-arm64-musl:orca-box-linux-arm64-musl"
 )
 
 mkdir -p "$OUT"

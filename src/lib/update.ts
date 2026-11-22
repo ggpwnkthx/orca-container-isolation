@@ -9,6 +9,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { setQuiet, say, die, plain } from "./output.ts";
+import { hasCommand } from "./which.ts";
 import { paths } from "./setup.ts";
 import { VERSION } from "./version.ts";
 import { boxIds, engineBinary } from "./engine.ts";
@@ -46,7 +47,7 @@ export function setAutoUpdate(mode: "on" | "off"): void {
   const { units, service, timer } = unitPaths();
 
   if (mode === "on") {
-    if (Bun.spawnSync(["which", "systemctl"], { stdout: "ignore", stderr: "ignore" }).exitCode !== 0) {
+    if (!hasSystemctl()) {
       die("systemd isn't available; run orca-box-update yourself instead");
     }
     mkdirSync(units, { recursive: true });
@@ -91,7 +92,7 @@ WantedBy=timers.target
     return;
   }
 
-  if (Bun.spawnSync(["which", "systemctl"], { stdout: "ignore", stderr: "ignore" }).exitCode === 0) {
+  if (hasSystemctl()) {
     Bun.spawnSync(["systemctl", "--user", "disable", "--now", "orca-box-update.timer"], {
       stdout: "ignore",
       stderr: "ignore",
@@ -104,11 +105,24 @@ WantedBy=timers.target
       // Not there.
     }
   }
-  Bun.spawnSync(["systemctl", "--user", "daemon-reload"], {
-    stdout: "ignore",
-    stderr: "ignore",
-  });
+  if (hasSystemctl()) {
+    Bun.spawnSync(["systemctl", "--user", "daemon-reload"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+  }
   say("Daily orca-box updates are off.");
+}
+
+/** Is systemd here? Not on OpenRC systems, or in a plain container. */
+function hasSystemctl(): boolean {
+  try {
+    return (
+      hasCommand("systemctl")
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Download the latest release into a temporary file. */
@@ -143,7 +157,7 @@ export async function update(options: UpdateOptions): Promise<void> {
     return;
   }
 
-  if (Bun.spawnSync(["which", "curl"], { stdout: "ignore", stderr: "ignore" }).exitCode !== 0) {
+  if (!hasCommand("curl")) {
     die("curl not found");
   }
 

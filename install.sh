@@ -59,10 +59,25 @@ trap 'rm -rf "$WORK"' EXIT
 
 ARCH="$(uname -m)"
 case "$ARCH" in
-  x86_64|amd64) ASSET="orca-box-linux-x64" ;;
-  aarch64|arm64) ASSET="orca-box-linux-arm64" ;;
+  x86_64|amd64) BASE="orca-box-linux-x64" ;;
+  aarch64|arm64) BASE="orca-box-linux-arm64" ;;
   *) die "no orca-box build for $ARCH" ;;
 esac
+
+# glibc or musl? Alpine and other musl systems need the musl build; the
+# glibc one won't run there. The loader's name says which it is.
+LIBPC="glibc"
+for loader in /lib/ld-musl-*.so.1 /lib/ld-musl-*.so.2; do
+  if [ -e "$loader" ]; then
+    LIBPC="musl"
+    break
+  fi
+done
+if [ "$LIBPC" = "musl" ]; then
+  ASSET="$BASE-musl"
+else
+  ASSET="$BASE"
+fi
 
 DOWNLOAD_URL="$RELEASE_URL/download/$ASSET"
 

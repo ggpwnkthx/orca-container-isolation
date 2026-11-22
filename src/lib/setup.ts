@@ -24,6 +24,7 @@ import {
   assetNames,
   fetchText,
   fetchToFile,
+  hasFuse,
   installFallbackIcon,
   installIcons,
   releaseInfo,
@@ -45,6 +46,7 @@ import {
 import { containerfile } from "../assets/skill-sync.ts";
 import { configure, runningOrca, userDataDir } from "./orca.ts";
 import { die, plain, say, warn } from "./output.ts";
+import { hasCommand } from "./which.ts";
 
 /** The commands this project installs, and the function behind each. */
 export const TOOLS = [
@@ -214,6 +216,34 @@ export async function installOrcaApp(from: string): Promise<void> {
   }
   const root = join(extract, "squashfs-root");
 
+  // An AppImage mounts itself with FUSE to run. Where FUSE isn't there,
+  // extract it once and run the extracted copy instead: that works
+  // everywhere, at the cost of some disk.
+  let program = dest;
+  if (!hasFuse()) {
+    const unpacked = `${dest}.d`;
+    say("This system has no FUSE, so Orca is extracted instead of mounted");
+    Bun.spawnSync(["rm", "-rf", unpacked]);
+    mkdirSync(unpacked, { recursive: true });
+    const done = Bun.spawnSync([dest, "--appimage-extract"], {
+      cwd: unpacked,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const appRun = join(unpacked, "squashfs-root", "AppRun");
+    if (done.exitCode === 0 && existsSync(appRun)) {
+      chmodSync(appRun, 0o755);
+      program = appRun;
+    } else {
+      Bun.spawnSync(["rm", "-rf", unpacked]);
+      warn(
+        "couldn't extract Orca, and this system has no FUSE to mount it with;\n" +
+          "    install fuse3 (or fuse) with your package manager, then rerun\n" +
+          "    orca-box-install-orca",
+      );
+    }
+  }
+
   if (!installIcons(root) && !installFallbackIcon(root)) {
     warn("couldn't extract Orca's icon; the menu entry will use a generic one");
   }
@@ -235,9 +265,57 @@ export async function installOrcaApp(from: string): Promise<void> {
   } catch {
     embedded = "";
   }
-  writeDesktopFile(embedded, dest, "orca-ide", version);
+  writeDesktopFile(embedded, dest, "orca-ide", version, program);
 
   Bun.spawnSync(["rm", "-rf", work]);
+}
+
+/**
+ * Your login name.
+ *
+ * Read from /etc/passwd, matched by uid, rather than asked for: the
+ * $USER environment variable isn't set under `su`, in some service
+ * managers, or in a bare container, and the runtime's own lookup can fail
+ * when the name service isn't reachable.
+ */
+function currentUsername(): string {
+  try {
+    const uid = process.getuid?.() ?? -1;
+    for (const line of readFileSync("/etc/passwd", "utf8").split("\n")) {
+      const parts = line.split(":");
+      if (parts.length >= 3 && Number(parts[2]) === uid) return parts[0] ?? "";
+    }
+  } catch {
+    // No passwd file to read.
+  }
+  return process.env.USER ?? process.env.LOGNAME ?? "";
+}
+
+/**
+ * Does your user have a range of subordinate ids in /etc/subuid or
+ * /etc/subgid? Rootless Podman needs one to map your user into a
+ * container.
+ */
+export function hasSubidRange(file: "subuid" | "subgid"): boolean {
+  const path = join("/etc", file);
+  try {
+    // The file is keyed by name on some systems and by uid on others, so
+    // accept either.
+    const user = currentUsername();
+    const uid = process.getuid?.() ?? -1;
+    return readFileSync(path, "utf8")
+      .split("\n")
+      .some((line) => {
+        // The format is name:start:count.
+        const [name, start, count] = line.split(":");
+        if (!name || !start || !count) return false;
+        if (name !== user && Number(name) !== uid) return false;
+        return Number(count) > 0;
+      });
+  } catch {
+    // No such file: no ranges.
+    return false;
+  }
 }
 
 /** A scratch folder for the installer's temporary files. */
@@ -362,14 +440,17 @@ export async function setup(options: SetupOptions): Promise<void> {
   if (process.getuid?.() === 0) {
     die("run this as your normal user, not root or sudo");
   }
-  for (const tool of ["git", "python3"]) {
-    if (Bun.spawnSync(["which", tool], { stdout: "ignore", stderr: "ignore" }).exitCode !== 0) {
+  // git is the only host program the box itself needs; the agents bring
+  // their own runtimes, and everything else is optional and checked where
+  // it is used.
+  for (const tool of ["git"]) {
+    if (!hasCommand(tool)) {
       die(`${tool} not found`);
     }
   }
   if (
     options.installApp &&
-    Bun.spawnSync(["which", "curl"], { stdout: "ignore", stderr: "ignore" }).exitCode !== 0 &&
+    !hasCommand("curl") &&
     !options.appFrom
   ) {
     die("curl not found");
@@ -413,6 +494,25 @@ export async function setup(options: SetupOptions): Promise<void> {
         );
       }
       say(`Using Podman ${ver} (rootless)`);
+
+      // Rootless Podman maps your user into the container with
+      // --userns=keep-id, which needs the setuid helpers and a range of
+      // subordinate ids. Some distributions ship Podman without them, and
+      // the failure only shows up much later, as a box that won't start.
+      if (!hasCommand("newuidmap")) {
+        warn(
+          "newuidmap isn't installed, so rootless Podman can't map your user into a box.\n" +
+            "    Install it with your package manager: uidmap (Debian, Ubuntu),\n" +
+            "    shadow-utils (Fedora), shadow (Arch), or use Docker instead.",
+        );
+      }
+      if (!hasSubidRange("subuid") || !hasSubidRange("subgid")) {
+        warn(
+          "your user has no subuid/subgid range, so rootless Podman can't map\n" +
+            "    your user into a box. Add one, or use Docker instead:\n" +
+            `      sudo usermod --add-subuids \$(id -u)-65536 --add-subgids \$(id -g)-65536 $(id -un)`,
+        );
+      }
       break;
     }
     case "docker":
