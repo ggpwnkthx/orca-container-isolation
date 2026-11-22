@@ -7,6 +7,12 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.1]
+
+### Fixed
+- The self-update now checks the download against the checksum the
+  release publishes, and refuses an update that doesn't match.
+
 ## [1.2.0]
 
 ### Added

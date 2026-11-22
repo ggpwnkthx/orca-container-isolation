@@ -278,7 +278,53 @@ async function downloadLatest(dest: string): Promise<string> {
   await Bun.write(dest, response);
   // It has to be runnable: the updater runs it to install itself.
   chmodSync(dest, 0o755);
+  await verifyDownload(dest);
   return dest;
+}
+
+/**
+ * Check the download against the checksum the release publishes.
+ *
+ * The release has one file with the checksums of all of its programs.
+ */
+async function verifyDownload(file: string): Promise<void> {
+  const sumsUrl = SOURCE_URL.replace(/\/[^/]+$/, "/SHA256SUMS");
+  let text = "";
+  try {
+    const response = await fetch(sumsUrl, {
+      redirect: "follow",
+      headers: { "User-Agent": "orca-box-update" },
+    });
+    if (response.ok) text = await response.text();
+  } catch {
+    // No checksum file where we expected one.
+  }
+
+  const asset = programAsset();
+  const line = text
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.endsWith(` ${asset}`));
+  const want = line ? (line.split(/\s+/)[0] ?? "") : "";
+
+  if (!want) {
+    if (process.env.ORCA_BOX_ALLOW_UNVERIFIED === "1") {
+      warn(
+        `the release publishes no checksum for ${asset}; updating unverified (ORCA_BOX_ALLOW_UNVERIFIED=1)`,
+      );
+      return;
+    }
+    die(
+      `the release publishes no checksum for ${asset}, so the download can't be verified.\n` +
+        "    Set ORCA_BOX_ALLOW_UNVERIFIED=1 to update anyway.",
+    );
+  }
+
+  const got = createHash("sha256").update(readFileSync(file)).digest("hex");
+  if (got !== want) {
+    die("the download doesn't match the published checksum; not updating");
+  }
+  say("Verified SHA-256 against the published checksum");
 }
 
 /** The version a program reports. */
