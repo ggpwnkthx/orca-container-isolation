@@ -252,6 +252,49 @@ export function mountOpt(mode: "ro" | "rw"): string {
   return opts ? `:${opts}` : "";
 }
 
+/**
+ * The security options every box gets.
+ *
+ * no-new-privileges keeps a setuid program in the box from giving itself
+ * more rights. Some container engines (older Docker Desktop versions on
+ * macOS) don't know the option, so it can be turned off; the setup works
+ * out whether the engine accepts it.
+ */
+export function securityArgs(): string[] {
+  if (setting("ORCA_BOX_NO_NEW_PRIVILEGES") === "0") return [];
+  return ["--security-opt", "no-new-privileges"];
+}
+
+/**
+ * Can this engine run a container with no-new-privileges?
+ *
+ * The image has to be there to try it. When it isn't, the answer is
+ * "yes, as far as we know": the engines on Linux all take the option,
+ * and it is only some Docker Desktop versions on macOS that don't.
+ */
+export function engineSupportsNoNewPrivileges(): boolean {
+  const image = setting("ORCA_BOX_IMAGE");
+  if (!image) return true;
+  const probe = Bun.spawnSync(
+    [
+      engineBinary(),
+      "run",
+      "--rm",
+      "--security-opt",
+      "no-new-privileges",
+      image,
+      "true",
+    ],
+    { stdout: "ignore", stderr: "pipe", stdin: "ignore" },
+  );
+  if (probe.exitCode === 0) return true;
+  const err = new TextDecoder().decode(probe.stderr ?? new Uint8Array());
+  // Only the option itself means "not supported"; anything else (no such
+  // image, no engine running) is a different problem.
+  if (/no-new-privileges/i.test(err)) return false;
+  return true;
+}
+
 /** The ids of every orca-box container, found by label or by image. */
 export function boxIds(): string[] {
   const bin = engineBinary();

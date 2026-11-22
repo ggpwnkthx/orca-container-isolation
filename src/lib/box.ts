@@ -22,11 +22,15 @@ import {
   prepareHome,
   runCaptured,
   runInteractive,
+  securityArgs,
   userArgs,
   worktreeOf,
 } from "./engine.ts";
 import { skillSyncScript } from "../assets/skill-sync.ts";
-import { die, plain } from "./output.ts";
+import { isMac, isShareableOnMac, isWindows } from "./platform.ts";
+import { containerPath } from "./hostpath.ts";
+import { die, plain, warn } from "./output.ts";
+import { hasCommand, runIfPresent } from "./which.ts";
 
 /** The folders the agents read skills from, on the host and in the box. */
 export const SKILL_DIRS = [".agents/skills", ".claude/skills", ".codex/skills", ".pi/agent/skills"];
@@ -436,8 +440,7 @@ export async function runAgent(args: string[]): Promise<void> {
   const common = [
     ...userArgs(),
     "--cap-drop=all",
-    "--security-opt",
-    "no-new-privileges",
+    ...securityArgs(),
     ...limits,
     "-v",
     `${setting("ORCA_BOX_HOME_VOLUME")}:/home/node`,

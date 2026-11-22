@@ -7,6 +7,14 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.2]
+
+### Added
+- `ORCA_BOX_NO_NEW_PRIVILEGES` turns the `no-new-privileges`
+  security option off, for engines that don't know it (some Docker
+  Desktop versions on macOS). The setup works out whether the engine
+  accepts it.
+
 ## [1.3.1]
 
 ### Changed
