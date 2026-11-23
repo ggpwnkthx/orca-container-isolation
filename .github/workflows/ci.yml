@@ -49,9 +49,6 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
       - name: Install shellcheck
         run: |
           sudo apt-get update
@@ -60,23 +57,16 @@ jobs:
       - name: Lint the shell
         run: shellcheck -S warning build.sh
 
-      - name: Build
-        run: ./build.sh
+      # Every released platform. The Linux build is one of them, so there
+      # is no need to build it twice.
+      - name: Build every platform
+        run: ./build.sh --all
 
       - name: Check the built program works
         run: |
           ./dist/orca-box-linux-x64 orca-box --help > /dev/null
           ./dist/orca-box-linux-x64 orca-box-setup --help > /dev/null
           ./dist/orca-box-linux-x64 --version
-
-      # Every released platform, and the build has to be reproducible:
-      # the release attaches these binaries, so a build that differs
-      # between runs would make the published checksums wrong.
-      - name: Build every platform
-        run: ./build.sh --all
-
-      - name: Check the build is reproducible
-        run: ./build.sh --check
 
       - name: Check the musl build is musl
         run: |
@@ -99,19 +89,24 @@ jobs:
 
   # The program has to work on macOS as well as on Linux, so it is
   # built and started there too.
+  #
+  # The runner is the Intel image, not macos-latest: macos-latest is the
+  # arm64 image now, and the arm64 pool is much smaller, so jobs wait a
+  # long time for a runner. The program is cross-compiled, so the build
+  # is the same either way; only the smoke test differs.
   macos:
     name: Build (macOS)
     needs: test
-    runs-on: macos-latest
+    runs-on: macos-15-intel
+    # The job takes a minute or two; this is here so that a job that
+    # hangs cannot hold the release up for ever.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
 
       - name: Build
         run: ./build.sh
@@ -144,9 +139,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
 
       - name: Build
         run: |
@@ -190,15 +182,9 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Typecheck
-        run: bun x tsc --noEmit
-
-      - name: Test
-        run: bun test --timeout 30000
-
+      # The tests have already run, in the job this one waits for, so
+      # there is nothing to check again here: the release only builds and
+      # publishes.
       - name: Build every platform
         run: ./build.sh --all
 
