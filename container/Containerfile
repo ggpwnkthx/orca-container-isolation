@@ -116,11 +116,16 @@ RUN set -eux; \
       rm -rf /var/lib/apt/lists/* /root/.cache; \
     fi
 
-# The agents look for the browsers in the home folder, which is a
+# The Playwright browsers are found in the home folder, which is a
 # volume: a browser an agent installs there survives the box being
 # thrown away and made again. The browsers the image brought along are
 # linked in there when the box starts, so both are found.
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+
+# Which orca-box built this image. It is here, at the end, so that a new
+# version of orca-box does not rebuild the layers above it.
+ARG ORCA_BOX_VERSION=dev
+ENV ORCA_BOX_IMAGE_VERSION=$ORCA_BOX_VERSION
 
 ENV DISABLE_AUTOUPDATER=1
 

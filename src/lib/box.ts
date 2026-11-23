@@ -42,6 +42,7 @@ import {
   worktreeOf,
 } from "./engine.ts";
 import { skillSyncScript } from "../assets/skill-sync.ts";
+import { VERSION } from "./version.ts";
 import { isMac, isShareableOnMac, isWindows } from "./platform.ts";
 import { containerPath } from "./hostpath.ts";
 import { die, plain, warn } from "./output.ts";
@@ -402,6 +403,25 @@ export function boxState(name: string): string {
 }
 
 /**
+ * The version of orca-box that made a running box.
+ *
+ * Empty when the box is not there, or when it was made before the label
+ * existed.
+ */
+export function boxVersion(name: string): string {
+  try {
+    return runCaptured(engineBinary(), [
+      "inspect",
+      "-f",
+      '{{index .Config.Labels "orca.version"}}',
+      name,
+    ]).trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Whether a running box was created with the GitHub credentials.
  *
  * Empty when the box is not there, or when it was made before the label
@@ -622,6 +642,8 @@ function lockHolderHint(file: string): string {
  */
 export const BOX_NOTE = `# This box
 
+Made by orca-box ${VERSION}.
+
 The home folder (/home/node) is a volume. It is shared by every box, and
 it survives: the box is thrown away, and the next one finds everything
 still there. The worktree is mounted too, and it survives as well.
@@ -779,6 +801,10 @@ export async function runAgent(args: string[]): Promise<void> {
     `${setting("ORCA_BOX_HOME_VOLUME")}:/home/node`,
     "-e",
     "HOME=/home/node",
+    // Which orca-box is running the agent, for the agent and for
+    // anyone who looks at the box.
+    "-e",
+    `ORCA_BOX_VERSION=${VERSION}`,
   ];
 
   // The name of the box, and the scratch folder it gets. The scratch
@@ -883,6 +909,8 @@ export async function runAgent(args: string[]): Promise<void> {
         "--label",
         `orca.git=${gitMode}`,
         "--label",
+        `orca.version=${VERSION}`,
+        "--label",
         `orca.gh=${wantGh}`,
         ...common,
         ...skills.mounts,
@@ -895,6 +923,8 @@ export async function runAgent(args: string[]): Promise<void> {
         `IDLE_SECONDS=${idleSeconds}`,
         "-e",
         `TMPDIR=${tmpDir}`,
+        "-e",
+        `ORCA_BOX_VERSION=${VERSION}`,
         ...git.env,
         image,
         "bash",
@@ -934,6 +964,19 @@ export async function runAgent(args: string[]): Promise<void> {
     );
     process.stderr.write(
       "orca-box: the new setting applies once the box goes idle, or run orca-box-archive here.\n",
+    );
+  }
+
+  // The box was made by another version of orca-box, so it is running
+  // the image that one built. Say so, rather than let the agent find an
+  // older browser and wonder.
+  const madeBy = boxVersion(name);
+  if (madeBy && madeBy !== VERSION) {
+    process.stderr.write(
+      `orca-box: this workspace's box was made by orca-box ${madeBy}; this one is ${VERSION}.\n`,
+    );
+    process.stderr.write(
+      "orca-box: the box keeps running that image until it goes idle, or run orca-box-archive here.\n",
     );
   }
 

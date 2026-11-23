@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_FILE_DIR, setting } from "./config.ts";
+import { VERSION } from "./version.ts";
 import { isMac, isWindows } from "./platform.ts";
 import { die, warn } from "./output.ts";
 import { findCommand, hasCommand } from "./which.ts";
@@ -481,6 +482,11 @@ export function nameOf(id: string): string {
 /** Build the agent image from a folder holding the Containerfile. */
 export function buildImage(dir: string, update = false): void {
   const args = ["build", "-f", join(dir, "Containerfile"), "-t", setting("ORCA_BOX_IMAGE")];
+  // Which orca-box built the image, in the image itself and in its
+  // label: so that a box can be traced back to the program that made
+  // it.
+  args.push("--label", `orca.version=${VERSION}`);
+  args.push("--build-arg", `ORCA_BOX_VERSION=${VERSION}`);
   // The browser layer is skipped when the setting is 0, for the images
   // that do not want a browser in them.
   args.push("--build-arg", `ORCA_BOX_BROWSER=${setting("ORCA_BOX_BROWSER")}`);

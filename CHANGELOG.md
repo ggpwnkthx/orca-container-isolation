@@ -42,6 +42,13 @@ and this project uses [semantic versioning](https://semver.org/).
   folder is a volume, so it survives; that is where the tools that have
   to outlive a box belong.
 
+### Added
+- The boxes say which orca-box made them: the label orca.version on the
+  container, ORCA_BOX_VERSION in the box's environment, and
+  ORCA_BOX_IMAGE_VERSION (and the same label) in the image. A box made
+  by an older orca-box says so when it is used, instead of the agent
+  finding an older image and wondering about it.
+
 ## [1.7.19]
 
 ### Fixed

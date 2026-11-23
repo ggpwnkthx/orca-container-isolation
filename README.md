@@ -222,7 +222,6 @@ takes a few minutes longer. Build the image without it by setting
 `ORCA_BOX_BROWSER=0` before the build.
 
 ### What survives, and what does not
-
 A box is thrown away when nothing has been running in it for a couple of
 minutes, and the next launch makes a new one. That is the difference
 between a box and a container you leave running, and it catches people
@@ -240,6 +239,19 @@ Two things survive:
 folder, so the temporary files tools make survive as well. The box also
 leaves a note about all of this in `~/.orca-box.md`, for the agents that
 work in it.
+
+### Which version is in the box
+
+Every box says which orca-box made it:
+
+- the **label** `orca.version` on the container, so
+  `podman inspect` (or `docker inspect`) answers it;
+- `ORCA_BOX_VERSION` in the box's environment, for the agents in it;
+- the image's own `ORCA_BOX_IMAGE_VERSION`, which is the orca-box that
+  built it, and the label `orca.version` on the image.
+
+A box made by an older orca-box says so when it is used, and keeps
+running that image until it goes idle.
 
 ## What it needs
 

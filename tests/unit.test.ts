@@ -416,6 +416,14 @@ describe("running a box", () => {
     expect(engineLog(result)).toContain("ms-playwright");
   });
 
+  test("the box says which orca-box made it", () => {
+    const result = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
+    // A label on the box, so it can be traced back to the program that
+    // made it, and a version in the environment, for the agent in it.
+    expect(engineLog(result)).toContain("orca.version=");
+    expect(engineLog(result)).toContain("-e ORCA_BOX_VERSION=");
+  });
+
   test("the .git directory is read-only by default", () => {
     const result = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
     const gitDir = gitCommonDir();
