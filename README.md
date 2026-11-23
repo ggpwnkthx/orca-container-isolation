@@ -125,7 +125,7 @@ setup adds that folder to your PATH for you.
 | --- | --- |
 | `--git=rw` | let agents stage and commit (default: read-only `.git`) |
 | `--yolo` | set the agents to Yolo permissions (the container is the boundary) |
-| `--gh-auth` | give agents your GitHub credentials, read-only |
+| `--gh-auth` | give agents your GitHub credentials, read-only (boxes that are already running need `orca-box-archive`) |
 | `--no-orca-app` | don't download or update the Orca app |
 
 `orca-box-setup --help` has the full list.
@@ -169,7 +169,15 @@ Each Orca workspace gets its own container, built from
   later be made to *execute* on the host stays read-only
 - a named volume used as `$HOME`, shared by all boxes (so logins are shared)
 - your host's skills, read-only, added to the box's own
-- the GitHub CLI; with `ORCA_BOX_GH_AUTH=1` it also gets your `gh` credentials
+- the GitHub CLI; with `ORCA_BOX_GH_AUTH=1` it also gets your `gh`
+  credentials, read-only. Those are a mount, and a mount is decided when
+  the box is made: a box that is already running keeps the mounts it was
+  made with, so run `orca-box-archive` after turning the setting on or
+  off. Signing in inside a box works too (`orca-box-login`, then `gh auth
+  login`): the boxes share one home, so that login is shared by all of
+  them. On Docker Desktop, use VirtioFS file sharing: with the older
+  gRPC-FUSE sharing the credential file belongs to root in the container,
+  and the agent cannot read it.
 
 It cannot see the rest of your home directory, `~/.ssh`, or other repos.
 
@@ -306,6 +314,7 @@ src/
     box.ts              the box: mounts, locking, creation, exec
     config.ts           ~/.config/orca-box/config
     engine.ts           Podman or Docker
+    gh.ts               the GitHub CLI's credentials on this host
     orca.ts             talks to Orca over its private local socket
     app.ts              the Orca app, on any platform
     appimage.ts         the Orca app on Linux: the AppImage and its menu entry

@@ -378,6 +378,30 @@ describe("running a box", () => {
     expect(engineLog(with_)).toContain(`${ghDir()}:/home/node/.config/gh:ro`);
   });
 
+  test("the box says whether it was made with the gh credentials", () => {
+    const without = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
+    expect(without.log).toContain("orca.gh=0");
+
+    const with_ = run(["orca-box", "claude"], {
+      FAKE_EXISTING: "0",
+      ORCA_BOX_GH_AUTH: "1",
+    });
+    expect(with_.log).toContain("orca.gh=1");
+  });
+
+  test("a box made without the gh credentials says so", () => {
+    // The credentials are a mount, so a box that is already running keeps
+    // the mounts it was made with: say so, rather than let the agent
+    // find an unauthenticated gh and wonder why.
+    const result = run(["orca-box", "claude"], {
+      FAKE_EXISTING: "1",
+      FAKE_GH: "0",
+      ORCA_BOX_GH_AUTH: "1",
+    });
+    expect(result.output).toContain("started without your gh credentials");
+    expect(result.output).toContain("orca-box-archive");
+  });
+
   test("an invalid ORCA_BOX_GIT is rejected", () => {
     const { output, code } = run(["orca-box", "claude"], { ORCA_BOX_GIT: "maybe" });
     expect(output).toContain("ORCA_BOX_GIT must be ro or rw");

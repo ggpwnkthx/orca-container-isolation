@@ -35,6 +35,7 @@ import {
   spawnProgram,
 } from "./engine.ts";
 import { containerfile } from "../assets/skill-sync.ts";
+import { hostGhState } from "./gh.ts";
 import { configure, runningOrca, userDataDir } from "./orca.ts";
 import { isLinux, isMac, isWindows } from "./platform.ts";
 import { removeAutoUpdate } from "./update.ts";
@@ -397,6 +398,20 @@ export async function setup(options: SetupOptions): Promise<void> {
     say(
       "Agents in the boxes can use your gh credentials (read-only; anyone in a box can read the token)",
     );
+    // Say what there is to share, so an empty share is not a mystery.
+    const host = hostGhState();
+    if (host.hasConfig) {
+      plain(`    Sharing ${join(host.dir, "hosts.yml")}.`);
+    } else if (host.hasToken) {
+      plain("    Sharing the token in the environment.");
+    } else {
+      plain("    There are no gh credentials on this host yet: there is no");
+      plain(`    ${join(host.dir, "hosts.yml")} and no GH_TOKEN in the environment.`);
+      plain("    Run gh auth login on the host, or sign in inside a box with");
+      plain("    orca-box-login: the boxes share one home, so that login is shared too.");
+    }
+    plain("    Boxes that are already running keep the mounts they were made with;");
+    plain("    run orca-box-archive to start them again.");
   }
 
   if (options.build) {

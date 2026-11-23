@@ -7,6 +7,18 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- The GitHub credentials are a mount, and a mount is decided when the box
+  is made. A box now carries a label saying whether it was made with
+  them, and a launch into a box that has the wrong ones says so and
+  says how to start a new box.
+
+### Changed
+- The setup says what there is to share when `--gh-auth` is used: the
+  host's credentials, a token in the environment, or nothing yet, and
+  what to do about it.
+- The login box gets the GitHub credentials too, so `gh` works in it.
+
 ## [1.7.14]
 
 ### Added

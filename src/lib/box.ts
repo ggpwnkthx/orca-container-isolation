@@ -24,6 +24,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { createHash } from "node:crypto";
 import { setting } from "./config.ts";
+import { defaultGhDir } from "./gh.ts";
 import {
   boxIds,
   engineBinary,
@@ -201,16 +202,6 @@ export function ghMounts(): { mounts: string[]; env: string[] } {
   return { mounts, env };
 }
 
-/** Where the GitHub CLI keeps its credentials on this platform. */
-function defaultGhDir(): string {
-  if (isWindows()) {
-    const roaming = process.env.APPDATA ?? join(homedir(), "AppData", "Roaming");
-    return join(roaming, "GitHub CLI");
-  }
-  const xdg = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
-  return join(xdg, "gh");
-}
-
 /** The .git mounts for the box, and the git environment that goes with them. */
 export function gitMounts(
   target: Target,
@@ -356,6 +347,25 @@ export function boxState(name: string): string {
       "inspect",
       "-f",
       '{{.State.Running}} {{index .Config.Labels "orca.box"}} {{index .Config.Labels "orca.git"}}',
+      name,
+    ]).trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Whether a running box was created with the GitHub credentials.
+ *
+ * Empty when the box is not there, or when it was made before the label
+ * existed.
+ */
+export function boxGhState(name: string): string {
+  try {
+    return runCaptured(engineBinary(), [
+      "inspect",
+      "-f",
+      '{{index .Config.Labels "orca.gh"}}',
       name,
     ]).trim();
   } catch {
@@ -645,6 +655,10 @@ export async function runAgent(args: string[]): Promise<void> {
   const skills = skillMounts();
   const skillSync = skills.sync;
   const gh = ghMounts();
+  // Whether this box should have the GitHub credentials. It is a label on
+  // the box, so a later launch can tell that the running box was made
+  // without them (or with them, when they are no longer wanted).
+  const wantGh = setting("ORCA_BOX_GH_AUTH") === "1" ? "1" : "0";
 
   // Options every box gets: the agent's user, no capabilities, and the
   // shared home volume.
@@ -668,6 +682,8 @@ export async function runAgent(args: string[]): Promise<void> {
         ...io,
         "--label",
         "orca.scratch=1",
+        "--label",
+        `orca.gh=${wantGh}`,
         ...common,
         "-w",
         "/home/node",
@@ -750,6 +766,8 @@ export async function runAgent(args: string[]): Promise<void> {
         "orca.box=2",
         "--label",
         `orca.git=${gitMode}`,
+        "--label",
+        `orca.gh=${wantGh}`,
         ...common,
         ...skills.mounts,
         ...gh.mounts,
@@ -782,6 +800,21 @@ export async function runAgent(args: string[]): Promise<void> {
     );
     process.stderr.write(
       `orca-box: the new setting (${gitMode}) applies once the box goes idle, or run orca-box-archive here.\n`,
+    );
+  }
+
+  // The GitHub credentials are a mount, so they are decided when the box is
+  // made. A box that was made without them (or with them) keeps that for
+  // as long as it runs.
+  const haveGh = boxGhState(name);
+  if (haveGh && haveGh !== wantGh) {
+    process.stderr.write(
+      wantGh === "1"
+        ? "orca-box: this workspace's box was started without your gh credentials.\n"
+        : "orca-box: this workspace's box was started with your gh credentials.\n",
+    );
+    process.stderr.write(
+      "orca-box: the new setting applies once the box goes idle, or run orca-box-archive here.\n",
     );
   }
 
@@ -852,6 +885,7 @@ export function archive(all: boolean): void {
 /** Open a shell in the box, to sign in to the agents. */
 export async function login(args: string[]): Promise<void> {
   prepareHome();
+  const gh = ghMounts();
   const common = [
     engineBinary(),
     "run",
@@ -867,6 +901,8 @@ export async function login(args: string[]): Promise<void> {
     "/home/node",
     "-e",
     `TERM=${process.env.TERM ?? "xterm-256color"}`,
+    ...gh.mounts,
+    ...gh.env,
     setting("ORCA_BOX_IMAGE"),
   ];
 

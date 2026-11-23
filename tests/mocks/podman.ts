@@ -11,6 +11,7 @@
  *   FAKE_LOG        file to append the command log to
  *   FAKE_EXISTING   1 (default) if a box already exists, 0 if not
  *   FAKE_GIT        the git mode of the existing box (ro/rw)
+ *   FAKE_GH         whether the existing box has the gh credentials (0/1)
  */
 
 import { appendFileSync } from "node:fs";
@@ -28,6 +29,7 @@ try {
 const args = process.argv.slice(2);
 const existing = process.env.FAKE_EXISTING ?? "1";
 const git = process.env.FAKE_GIT ?? "ro";
+const gh = process.env.FAKE_GH ?? "0";
 
 switch (args[0]) {
   case "info": {
@@ -59,6 +61,8 @@ switch (args[0]) {
       console.log("/tmp");
     } else if (format.includes("State.Running")) {
       if (existing === "1") console.log(`true 2 ${git}`);
+    } else if (format.includes("orca.gh")) {
+      console.log(gh);
     } else if (format.includes("Name")) {
       console.log("/name");
     }
