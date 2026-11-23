@@ -7,6 +7,13 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.16]
+
+### Changed
+- The project moved to
+  https://github.com/ggpwnkthx/orca-container-isolation, and the program
+  looks for its releases and its updates there.
+
 ## [1.7.15]
 
 ### Added
@@ -16,9 +23,6 @@ and this project uses [semantic versioning](https://semver.org/).
   says how to start a new box.
 
 ### Changed
-- The project moved to
-  https://github.com/ggpwnkthx/orca-container-isolation, and the program
-  looks for its releases and its updates there.
 - The gh token is asked of the host's gh and passed in the environment.
   gh keeps the token in the system credential store -- the keychain on
   macOS, the credential manager on Windows -- and falls back to a plain
