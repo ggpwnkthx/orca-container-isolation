@@ -23,7 +23,21 @@ jobs:
         run: bun x tsc --noEmit
 
       - name: Test
-        run: bun test --timeout 30000
+        shell: bash
+        run: |
+          set +e
+          out="$(bun test --timeout 30000 2>&1)"
+          code=$?
+          echo "$out" | tail -40
+          if [ "$code" -ne 0 ]; then
+            summary="$(echo "$out" | grep -E '^\((fail|todo)\)|^ *[0-9]+ (pass|fail)|error:|Received:|Expected' | head -30)"
+            summary="${summary//$'\n'/%0A}"
+            echo "::error title=Test failure::${summary}"
+            tail="$(echo "$out" | tail -25)"
+            tail="${tail//$'\n'/%0A}"
+            echo "::error title=Test output::${tail}"
+          fi
+          exit "$code"
 
       - name: Build
         run: ./build.sh
@@ -80,7 +94,21 @@ jobs:
         run: bun x tsc --noEmit
 
       - name: Test
-        run: bun test --timeout 30000
+        shell: bash
+        run: |
+          set +e
+          out="$(bun test --timeout 30000 2>&1)"
+          code=$?
+          echo "$out" | tail -40
+          if [ "$code" -ne 0 ]; then
+            summary="$(echo "$out" | grep -E '^\((fail|todo)\)|^ *[0-9]+ (pass|fail)|error:|Received:|Expected' | head -30)"
+            summary="${summary//$'\n'/%0A}"
+            echo "::error title=Test failure::${summary}"
+            tail="$(echo "$out" | tail -25)"
+            tail="${tail//$'\n'/%0A}"
+            echo "::error title=Test output::${tail}"
+          fi
+          exit "$code"
 
       - name: Build
         run: ./build.sh
@@ -119,7 +147,21 @@ jobs:
         run: bun x tsc --noEmit
 
       - name: Test
-        run: bun test --timeout 30000
+        shell: bash
+        run: |
+          set +e
+          out="$(bun test --timeout 30000 2>&1)"
+          code=$?
+          echo "$out" | tail -40
+          if [ "$code" -ne 0 ]; then
+            summary="$(echo "$out" | grep -E '^\((fail|todo)\)|^ *[0-9]+ (pass|fail)|error:|Received:|Expected' | head -30)"
+            summary="${summary//$'\n'/%0A}"
+            echo "::error title=Test failure::${summary}"
+            tail="$(echo "$out" | tail -25)"
+            tail="${tail//$'\n'/%0A}"
+            echo "::error title=Test output::${tail}"
+          fi
+          exit "$code"
 
       - name: Build
         run: |

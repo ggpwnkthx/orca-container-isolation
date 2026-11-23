@@ -7,6 +7,12 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.8]
+
+### Changed
+- The tests say what the program answered when the container engine
+  was not called, so that a failure says why.
+
 ## [1.7.7]
 
 ### Changed

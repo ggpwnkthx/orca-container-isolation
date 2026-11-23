@@ -8,7 +8,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, symlinkSync, chmodSync, copyFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync, symlinkSync, chmodSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -103,9 +103,11 @@ function run(args: string[], env: Record<string, string> = {}): {
   output: string;
   log: string;
   code: number;
+  path: string;
 } {
   const log = join(work, "engine.log");
   writeFileSync(log, "");
+  const path = `${bin}${delimiter}${process.env.PATH ?? ""}`;
   const proc = Bun.spawnSync(
     [process.execPath, join(import.meta.dir, "..", "src", "main.ts"), ...args],
     {
@@ -121,7 +123,7 @@ function run(args: string[], env: Record<string, string> = {}): {
         XDG_CONFIG_HOME: join(home, ".config"),
         APPDATA: join(home, "AppData", "Roaming"),
         LOCALAPPDATA: join(home, "AppData", "Local"),
-        PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+        PATH: path,
         FAKE_LOG: log,
         ...env,
       },
@@ -133,6 +135,7 @@ function run(args: string[], env: Record<string, string> = {}): {
     output: `${new TextDecoder().decode(proc.stdout)}${new TextDecoder().decode(proc.stderr)}`,
     log: readFileSync(log, "utf8"),
     code: proc.exitCode ?? 0,
+    path,
   };
 }
 
@@ -274,12 +277,33 @@ function ghDir(): string {
   return join(home, ".config", "gh");
 }
 
+/**
+ * The engine's log, and what the program said.
+ *
+ * Both are looked at, so that a failure says why the engine was not
+ * called: the program usually explains itself on stderr.
+ */
+function engineLog(result: {
+  log: string;
+  output: string;
+  code: number;
+  path: string;
+}): string {
+  let mocks = "";
+  try {
+    mocks = readdirSync(bin).join(", ");
+  } catch {
+    mocks = "(none)";
+  }
+  return `${result.log}\n(exit ${result.code})\nPATH ${result.path}\nmocks: ${mocks}\n${result.output}`;
+}
+
 describe("running a box", () => {
   test("it runs the agent in the workspace's box", () => {
     // The box is made here, so the log says which worktree it is for.
-    const { log } = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
-    expect(log).toContain("PODMAN exec -i");
-    expect(log).toContain(worktreePath());
+    const result = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
+    expect(engineLog(result)).toContain("PODMAN exec -i");
+    expect(engineLog(result)).toContain(worktreePath());
   });
 
   test("an existing box is reused, not recreated", () => {
@@ -288,19 +312,19 @@ describe("running a box", () => {
   });
 
   test("the container drops all capabilities", () => {
-    const { log } = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
-    expect(log).toContain("--cap-drop=all");
-    expect(log).toContain("--security-opt no-new-privileges");
+    const result = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
+    expect(engineLog(result)).toContain("--cap-drop=all");
+    expect(engineLog(result)).toContain("--security-opt no-new-privileges");
   });
 
   test("the .git directory is read-only by default", () => {
-    const { log } = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
+    const result = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
     const gitDir = gitCommonDir();
-    expect(log).toContain(`-v ${gitDir}:${containerPath(gitDir)}:ro`);
+    expect(engineLog(result)).toContain(`-v ${gitDir}:${containerPath(gitDir)}:ro`);
   });
 
   test("rw mode makes .git writable but keeps hooks read-only", () => {
-    const { log } = run(["orca-box", "claude"], {
+    const result = run(["orca-box", "claude"], {
       FAKE_EXISTING: "0",
       ORCA_BOX_GIT: "rw",
     });
@@ -308,17 +332,17 @@ describe("running a box", () => {
     // The folders inside .git are joined the way the system writes them.
     const hooks = join(gitDir, "hooks");
     const config = join(gitDir, "config");
-    expect(log).toContain(`-v ${gitDir}:${containerPath(gitDir)}`);
-    expect(log).toContain(`-v ${hooks}:${containerPath(hooks)}:ro`);
-    expect(log).toContain(`-v ${config}:${containerPath(config)}:ro`);
-    expect(log).toContain("GIT_CONFIG_KEY_1=maintenance.auto");
+    expect(engineLog(result)).toContain(`-v ${gitDir}:${containerPath(gitDir)}`);
+    expect(engineLog(result)).toContain(`-v ${hooks}:${containerPath(hooks)}:ro`);
+    expect(engineLog(result)).toContain(`-v ${config}:${containerPath(config)}:ro`);
+    expect(engineLog(result)).toContain("GIT_CONFIG_KEY_1=maintenance.auto");
   });
 
   test("the host's skills are mounted read-only", () => {
-    const { log } = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
+    const result = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
     // The host side of the mount is the path as the system writes it.
     const skills = join(home, ".agents/skills");
-    expect(log).toContain(`-v ${skills}:${containerPath(skills)}:ro`);
+    expect(engineLog(result)).toContain(`-v ${skills}:${containerPath(skills)}:ro`);
   });
 
   test("ORCA_BOX_SKILLS=0 turns the skill mounts off", () => {
@@ -337,7 +361,7 @@ describe("running a box", () => {
       FAKE_EXISTING: "0",
       ORCA_BOX_GH_AUTH: "1",
     });
-    expect(with_.log).toContain(`${ghDir()}:/home/node/.config/gh:ro`);
+    expect(engineLog(with_)).toContain(`${ghDir()}:/home/node/.config/gh:ro`);
   });
 
   test("an invalid ORCA_BOX_GIT is rejected", () => {
