@@ -68,14 +68,15 @@ jobs:
             echo "the release $tag is already published" >&2
             exit 0
           fi
+          # The tag is made here, at the commit this run built, unless it
+          # is already there.
+          target=""
           if ! git rev-parse "$tag" >/dev/null 2>&1; then
-            git tag -a "$tag" -m "$tag" "$GITHUB_SHA"
-            # Another run may have made the same tag; that is fine.
-            git push origin "$tag" || echo "the tag is already on the remote" >&2
+            target="--target $GITHUB_SHA"
           fi
           # Another run may have published it in the meantime; that is
           # fine too.
-          gh release create "$tag" \
+          if ! out="$(gh release create "$tag" $target \
             --title "$tag" \
             --generate-notes \
             dist/orca-box-linux-x64 \
@@ -85,11 +86,12 @@ jobs:
             dist/orca-box-darwin-x64 \
             dist/orca-box-darwin-arm64 \
             dist/orca-box-windows-x64.exe \
-            dist/SHA256SUMS \
-            || {
-              if gh release view "$tag" >/dev/null 2>&1; then
-                echo "the release $tag is already published" >&2
-                exit 0
-              fi
-              exit 1
-            }
+            dist/SHA256SUMS 2>&1)"; then
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "the release $tag is already published" >&2
+              exit 0
+            fi
+            echo "::error title=The release could not be published::${out//$'\n'/%0A}"
+            exit 1
+          fi
+          echo "published $tag"

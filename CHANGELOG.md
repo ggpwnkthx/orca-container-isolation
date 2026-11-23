@@ -7,6 +7,18 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.11]
+
+### Fixed
+- The container engine was found by name, and Windows does not
+  always add the .exe extension when a program is started, so it was
+  never found there. It is looked up on the PATH and started by its
+  full path now.
+
+### Changed
+- The release is made with the tag that gh makes, and says in the
+  annotations why it could not be made.
+
 ## [1.7.10]
 
 ### Changed

@@ -140,9 +140,19 @@ function detectMode(): EngineMode | null {
   return null;
 }
 
+/**
+ * A program on the PATH, by its full path.
+ *
+ * Windows keeps the extension, and the system does not always add it
+ * when a program is started by name, so the program is looked up first.
+ */
+function program(bin: string): string {
+  return findCommand(bin) || bin;
+}
+
 function commandWorks(bin: string, args: string[]): boolean {
   try {
-    const proc = Bun.spawnSync([bin, ...args], {
+    const proc = Bun.spawnSync([program(bin), ...args], {
       stdout: "ignore",
       stderr: "ignore",
       stdin: "ignore",
@@ -166,7 +176,7 @@ export function rememberEngine(): void {
  * error messages.
  */
 export function runCaptured(bin: string, args: string[]): string {
-  const proc = Bun.spawnSync([bin, ...args], {
+  const proc = Bun.spawnSync([program(bin), ...args], {
     stdout: "pipe",
     stderr: "inherit",
     stdin: "ignore",

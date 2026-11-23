@@ -39,7 +39,7 @@ import { isLinux, isMac, isWindows } from "./platform.ts";
 import { removeAutoUpdate } from "./update.ts";
 import { paths } from "./paths.ts";
 import { die, plain, say, warn } from "./output.ts";
-import { hasCommand, runIfPresent } from "./which.ts";
+import { findCommand, hasCommand, runIfPresent } from "./which.ts";
 
 /** The commands this project installs, and the function behind each. */
 export { TOOLS } from "./command.ts";
@@ -123,6 +123,13 @@ export function hasSubidRange(file: "subuid" | "subgid"): boolean {
     // No such file: no ranges.
     return false;
   }
+}
+
+/**
+ * Podman, found on the PATH.
+ */
+function podmanBinary(): string {
+  return findCommand("podman") || "podman";
 }
 
 /**
@@ -293,7 +300,7 @@ export async function setup(options: SetupOptions): Promise<void> {
 
   switch (engineMode()) {
     case "podman": {
-      const version = Bun.spawnSync(["podman", "version", "--format", "{{.Client.Version}}"], {
+      const version = Bun.spawnSync([podmanBinary(), "version", "--format", "{{.Client.Version}}"], {
         stdout: "pipe",
         stderr: "ignore",
       });
