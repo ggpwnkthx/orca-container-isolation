@@ -26,6 +26,56 @@ chmod +x orca-box-linux-x64     # Linux and macOS
 ./orca-box-linux-x64
 ```
 
+### One line
+
+Or paste one line into a terminal: it downloads the right build, makes it
+runnable and starts it, and the program sets itself up from there.
+
+**Linux (x64, glibc)**
+
+```sh
+curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box-linux-x64 -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
+```
+
+**Linux (x64, musl — Alpine)**
+
+```sh
+curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box-linux-x64-musl -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
+```
+
+**Linux (arm64, glibc)**
+
+```sh
+curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box-linux-arm64 -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
+```
+
+**Linux (arm64, musl)**
+
+```sh
+curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box-linux-arm64-musl -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
+```
+
+**macOS (Apple silicon)**
+
+```sh
+curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box-darwin-arm64 -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
+```
+
+**macOS (Intel)**
+
+```sh
+curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box-darwin-x64 -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
+```
+
+**Windows** (PowerShell)
+
+```powershell
+Invoke-WebRequest https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box-windows-x64.exe -OutFile "$env:TEMP\orca-box.exe"; & "$env:TEMP\orca-box.exe"
+```
+
+If `curl` is not there, `wget -O /tmp/orca-box <url>` does the same
+download.
+
 On Windows, run `orca-box-windows-x64.exe`; it asks nothing and needs no
 administrator rights.
 
@@ -130,7 +180,7 @@ The host needs very little:
 | What | Why | If it's missing |
 | --- | --- | --- |
 | `git` | finding the worktree | the installer says so |
-| Podman **or** Docker | running the boxes | the installer says so |
+| Docker, or Podman on Linux and macOS | running the boxes | the installer says so |
 | `flock` (Linux) or `lockf` (macOS) | one launch per workspace | boxes still work, but two can start at once |
 
 Nothing else is needed: the program brings its own runtime, and it does
@@ -183,7 +233,8 @@ Docker Desktop is the usual engine on macOS. Two things to know:
   rather than to you, and the agents can't write to the worktree.
 
 Podman works on macOS too, through `podman machine`; Docker Desktop is
-usually the smoother choice.
+usually the smoother choice. The machine shares your home folder by default,
+so keep the worktree there, the same rule as for Docker Desktop.
 
 ### On Windows
 
@@ -195,6 +246,10 @@ follow from that.
   in it, so the drive becomes a folder: `C:\Users\me\project` is mounted
   at `/c/Users/me/project` in the box. The shape of the path is kept, so
   it still reads like the path on the host.
+- **The engine.** Docker Desktop is the only supported engine on Windows.
+  Podman's machine mounts the drives differently (`/mnt/c`, not `/c`) and
+  has no host user to map onto a Linux uid, so the installer refuses
+  Podman and points at Docker Desktop.
 - **The commands.** Windows cannot run a program through a link without
   extra privileges, so the commands are small `.cmd` files in
   `%LOCALAPPDATA%\orca-box\bin` that call the program. They are meant
@@ -220,6 +275,11 @@ your worktrees there.
 Podman if it works, otherwise Docker. Both are fine; the difference is in how
 your user maps onto the container's (`userns=keep-id` for Podman, your own
 UID/GID for Docker, container root for rootless Docker).
+
+On Windows, Docker is the only engine. The boxes mount the worktree at
+Docker Desktop's path (`C:\Users\me\project` becomes `/c/Users/me/project`)
+and map the host user onto a Linux uid, and Podman's machine has neither, so
+the installer refuses Podman and points at Docker Desktop.
 
 ## Configuration
 
