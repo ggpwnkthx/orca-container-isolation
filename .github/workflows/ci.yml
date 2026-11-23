@@ -1,13 +1,24 @@
 name: CI
 
+# One test for the program itself, and one build for each platform it
+# runs on. The release is made when they all pass.
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
+# The release job asks for more, and only it needs it.
+permissions:
+  contents: read
+
 jobs:
-  check:
+  # The program itself: its types, and its tests. Nothing else is
+  # needed for these, so they run first and every platform waits for
+  # them.
+  test:
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +36,30 @@ jobs:
       - name: Test
         run: bun test --timeout 30000
 
+  # The Linux build: the executable most people run, and every other
+  # platform's build, checked.
+  linux:
+    name: Build (Linux)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Lint the shell
+        run: shellcheck -S warning build.sh
+
       - name: Build
         run: ./build.sh
 
@@ -34,9 +69,9 @@ jobs:
           ./dist/orca-box-linux-x64 orca-box-setup --help > /dev/null
           ./dist/orca-box-linux-x64 --version
 
-      # Every released platform, and the build has to be reproducible: the
-      # release attaches these binaries, so a build that differs between
-      # runs would make the published checksums wrong.
+      # Every released platform, and the build has to be reproducible:
+      # the release attaches these binaries, so a build that differs
+      # between runs would make the published checksums wrong.
       - name: Build every platform
         run: ./build.sh --all
 
@@ -62,9 +97,11 @@ jobs:
           head -c 2 dist/orca-box-windows-x64.exe | od -An -tx1 | grep -q "4d 5a" \
             || (echo "the Windows build is not a Windows program" >&2; exit 1)
 
-  # The program has to work on macOS as well as on Linux, so it is built
-  # and tested there too.
+  # The program has to work on macOS as well as on Linux, so it is
+  # built and started there too.
   macos:
+    name: Build (macOS)
+    needs: test
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,12 +112,6 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      - name: Typecheck
-        run: bun x tsc --noEmit
-
-      - name: Test
-        run: bun test --timeout 30000
 
       - name: Build
         run: ./build.sh
@@ -101,9 +132,11 @@ jobs:
           ln -sf "$PWD/$asset" "$HOME/.local/bin/orca-box-archive"
           "$HOME/.local/bin/orca-box-archive" --help | grep -q orca-box-archive
 
-  # The program has to work on Windows as well, so it is built and tested
-  # there too.
+  # The program has to work on Windows as well, so it is built and
+  # started there too.
   windows:
+    name: Build (Windows)
+    needs: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,12 +147,6 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      - name: Typecheck
-        run: bun x tsc --noEmit
-
-      - name: Test
-        run: bun test --timeout 30000
 
       - name: Build
         run: |
@@ -142,17 +169,88 @@ jobs:
           .\dist\orca-box-windows-x64.exe orca-box-archive --help |
             Select-String -Pattern "orca-box-archive"
 
-  shell:
+  # The release is made when the program and every platform's build
+  # have passed: it carries the executables, so a broken one must not be
+  # published.
+  release:
+    name: Release
+    needs: [test, linux, macos, windows]
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'push' && github.ref_type == 'tag')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Install shellcheck
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
-      # The only shell left is the build script.
-      - name: Lint the shell
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun x tsc --noEmit
+
+      - name: Test
+        run: bun test --timeout 30000
+
+      - name: Build every platform
+        run: ./build.sh --all
+
+      - name: Work out the tag
+        id: tag
         run: |
-          shellcheck -S warning build.sh
+          version="$(cat VERSION)"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # A tag that was pushed by hand: it has to be the version.
+            if [ "${GITHUB_REF_NAME}" != "v$version" ]; then
+              echo "VERSION is $version but the tag is ${GITHUB_REF_NAME}" >&2
+              exit 1
+            fi
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="v$version"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "the release $tag is already published" >&2
+            exit 0
+          fi
+          # The tag is made here, at the commit this run built, unless it
+          # is already there.
+          target=""
+          if ! git rev-parse "$tag" >/dev/null 2>&1; then
+            target="--target $GITHUB_SHA"
+          fi
+          # Another run may have published it in the meantime; that is
+          # fine too.
+          if ! out="$(gh release create "$tag" $target \
+            --title "$tag" \
+            --generate-notes \
+            dist/orca-box-linux-x64 \
+            dist/orca-box-linux-arm64 \
+            dist/orca-box-linux-x64-musl \
+            dist/orca-box-linux-arm64-musl \
+            dist/orca-box-darwin-x64 \
+            dist/orca-box-darwin-arm64 \
+            dist/orca-box-windows-x64.exe \
+            dist/SHA256SUMS 2>&1)"; then
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "the release $tag is already published" >&2
+              exit 0
+            fi
+            echo "::error title=The release could not be published::${out//$'\n'/%0A}"
+            exit 1
+          fi
+          echo "published $tag"

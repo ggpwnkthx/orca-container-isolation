@@ -7,6 +7,13 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.13]
+
+### Changed
+- The CI has one job for the program itself and one job for
+  each platform's build, and the release is made only when all of
+  them have passed.
+
 ## [1.7.12]
 
 ### Fixed

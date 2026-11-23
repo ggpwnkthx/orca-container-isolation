@@ -68,15 +68,17 @@ git commit -am "v1.2.3"
 git push
 ```
 
-The release workflow typechecks, tests, builds every platform and attaches
-the executables and their checksums to the GitHub Release. It makes the
-tag for the version in the VERSION file, so the version and the release
-are never out of step; a tag pushed by hand works too, as long as it is
-the version. People install by downloading the executable for their
-machine and running it; there is no bootstrapper script.
-`orca-box-update` fetches the latest release and checks it against the
-published checksum, so a released version is what users get; `main` stays
-the moving target.
+The CI has one job for the program itself (its types and its tests)
+and one job for each platform's build. The release is made when all of
+them have passed, so a broken build is never published. It typechecks,
+tests, builds every platform and attaches the executables and their
+checksums to the GitHub Release. It makes the tag for the version in
+the VERSION file, so the version and the release are never out of step;
+a tag pushed by hand works too, as long as it is the version. People
+install by downloading the executable for their machine and running it;
+there is no bootstrapper script. `orca-box-update` fetches the latest
+release and checks it against the published checksum, so a released
+version is what users get; `main` stays the moving target.
 
 ## Reporting a bug
 
