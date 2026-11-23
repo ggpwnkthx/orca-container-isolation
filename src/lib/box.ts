@@ -613,10 +613,52 @@ function lockHolderHint(file: string): string {
   return `ls -l /proc/[0-9]*/fd 2>/dev/null | grep -F '${file}'`;
 }
 
+/**
+ * The note the box leaves for the agents in it.
+ *
+ * It says what survives and what does not, because the answer is not
+ * what a container is expected to do: the box is thrown away and made
+ * again, and the things an agent put in /tmp go with it.
+ */
+export const BOX_NOTE = `# This box
+
+The home folder (/home/node) is a volume. It is shared by every box, and
+it survives: the box is thrown away, and the next one finds everything
+still there. The worktree is mounted too, and it survives as well.
+
+Everything else -- /tmp, /usr/local, and the rest of the container's own
+filesystem -- belongs to this box alone, and goes when the box goes. A
+box with nothing running in it is thrown away after a couple of minutes,
+and the next launch makes a new one, with an empty /tmp.
+
+So put anything that has to survive in the home folder or in the
+worktree. TMPDIR points at this box's own scratch folder in the home
+folder, which survives too.
+
+The browser is at /usr/local/bin/chromium. The Playwright browsers are
+in $HOME/.cache/ms-playwright, which is in the home folder: the ones the
+image brought along are linked in there, and a browser an agent installs
+there survives the box.
+`;
+
 /** The script that runs inside the box as its PID 1. */
 export function watchdogScript(): string {
   return `
 trap "exit 0" TERM INT
+# The scratch folder, in the home folder: it survives the box.
+mkdir -p "$TMPDIR" 2>/dev/null || true
+# The Playwright browsers: the agents look for them in the home folder,
+# which is a volume. The ones the image brought along are linked in
+# there, and a browser an agent installs there survives the box.
+mkdir -p "$HOME/.cache/ms-playwright" 2>/dev/null || true
+for dir in /opt/ms-playwright/*/; do
+  [ -d "$dir" ] || continue
+  name="\${dir%/}"; name="\${name##*/}"
+  [ -e "$HOME/.cache/ms-playwright/$name" ] || ln -s "$dir" "$HOME/.cache/ms-playwright/$name" 2>/dev/null || true
+done
+# A note for the agents, in the home folder, where it survives.
+cat > "$HOME/.orca-box.md" <<'ORCA_BOX_NOTE'
+${BOX_NOTE}ORCA_BOX_NOTE
 step=15; limit=$(( (IDLE_SECONDS + step - 1) / step )); idle=0
 while :; do
   sleep "$step" & wait $!
@@ -739,6 +781,12 @@ export async function runAgent(args: string[]): Promise<void> {
     "HOME=/home/node",
   ];
 
+  // The name of the box, and the scratch folder it gets. The scratch
+  // folder is in the home volume, so it survives the box being thrown
+  // away and made again -- unlike /tmp, which belongs to the box alone.
+  const name = target.worktree ? boxName(target.worktree) : "scratch";
+  const tmpDir = `/home/node/.tmp/${name}`;
+
   if (!target.worktree) {
     prepareHome();
     const proc = spawnEngine(
@@ -753,6 +801,8 @@ export async function runAgent(args: string[]): Promise<void> {
         ...common,
         "-w",
         "/home/node",
+        "-e",
+        `TMPDIR=${tmpDir}`,
         ...skills.mounts,
         ...gh.mounts,
         ...gh.env,
@@ -771,7 +821,6 @@ export async function runAgent(args: string[]): Promise<void> {
     process.exit(await proc.exited);
   }
 
-  const name = boxName(target.worktree);
   const lockDir = BoxLock.prepare();
   const lock = new BoxLock(lockDir, name);
   const lockTimeout = Number(process.env.ORCA_BOX_LOCK_TIMEOUT ?? 60);
@@ -844,6 +893,8 @@ export async function runAgent(args: string[]): Promise<void> {
         containerPath(target.worktree),
         "-e",
         `IDLE_SECONDS=${idleSeconds}`,
+        "-e",
+        `TMPDIR=${tmpDir}`,
         ...git.env,
         image,
         "bash",
@@ -910,12 +961,51 @@ export async function runAgent(args: string[]): Promise<void> {
       ...io,
       "-w",
       containerPath(target.here),
+      // The scratch folder of this box, in the home volume: it survives
+      // the box being thrown away and made again.
+      "-e",
+      `TMPDIR=${tmpDir}`,
+      // A browser the home folder has, for the images that have none.
+      ...homeBrowserEnv(name),
       name,
       ...args,
     ],
     { stdout: "inherit", stderr: "inherit", stdin: "inherit" },
   );
   process.exit(await proc.exited);
+}
+
+/**
+ * The browser in the shared home folder, if there is one.
+ *
+ * The image has a browser of its own now. But a user (or an agent) can
+ * leave one in the home folder too -- the shared volume -- for the
+ * images that have none, or for a browser of their own. The agent is
+ * told where it is, so it does not have to go looking for it, and the
+ * browser tools find it without a path of their own.
+ *
+ * The wrapper sets the library path itself, so nothing else is passed
+ * to the agent: the libraries it needs are only its own.
+ */
+function homeBrowserEnv(name: string): string[] {
+  const env: string[] = [];
+  let found = "";
+  try {
+    found = runCaptured(engineBinary(), [
+      "exec",
+      name,
+      "sh",
+      "-c",
+      "test -x /home/node/.local/bin/chromium && echo yes",
+    ]).trim();
+  } catch {
+    return env;
+  }
+  if (found !== "yes") return env;
+  for (const key of ["IMPECCABLE_BROWSER", "CHROME_PATH", "PUPPETEER_EXECUTABLE_PATH"]) {
+    env.push("-e", `${key}=/home/node/.local/bin/chromium`);
+  }
+  return env;
 }
 
 /** Remove the boxes, now or all of them. */

@@ -194,13 +194,15 @@ describe("the agent image", () => {
     expect(text).toContain("fonts-");
     // Playwright, for the skills that drive a browser.
     expect(text).toContain("playwright");
-    // The browsers live outside the home folder: the boxes share one
-    // home volume, and it would hide them.
-    expect(text).toContain("PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright");
+    // The agents look for the browsers in the home folder, which is a
+    // volume: a browser an agent installs there survives the box.
+    expect(text).toContain("PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright");
     // The browser tools look for these.
     expect(text).toContain("IMPECCABLE_BROWSER=");
     expect(text).toContain("CHROME_PATH=");
     expect(text).toContain("PUPPETEER_EXECUTABLE_PATH=");
+    // The user's own tools are on the PATH in every box.
+    expect(text).toContain("PATH=/home/node/.local/bin");
   });
 
   test("the browser wrapper is embedded", async () => {
@@ -398,6 +400,20 @@ describe("running a box", () => {
     const result = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
     expect(engineLog(result)).toContain("--cap-drop=all");
     expect(engineLog(result)).toContain("--security-opt no-new-privileges");
+  });
+
+  test("the scratch folder is in the home folder, so it survives the box", () => {
+    const result = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
+    // TMPDIR is in the home volume, not in the container's own
+    // filesystem: /tmp goes when the box goes.
+    expect(engineLog(result)).toContain("TMPDIR=/home/node/.tmp/");
+    expect(engineLog(result)).not.toContain("TMPDIR=/tmp");
+  });
+
+  test("the box says what survives, for the agents in it", () => {
+    const result = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
+    expect(engineLog(result)).toContain(".orca-box.md");
+    expect(engineLog(result)).toContain("ms-playwright");
   });
 
   test("the .git directory is read-only by default", () => {

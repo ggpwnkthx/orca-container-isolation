@@ -13,8 +13,8 @@ and this project uses [semantic versioning](https://semver.org/).
   browser that was put into an image by hand cannot start, because half
   of it is missing), Playwright in Node and in Python with the browser
   it drives, and the fonts a page needs to be readable. The Playwright
-  browsers live outside the home folder, because the boxes share one
-  home volume and it would hide them.
+  browsers are found in the home folder, so one an agent installs
+  survives the box.
 - The browser is started through a wrapper that turns Chromium's own
   sandbox off (the boxes drop every capability, so it cannot start; the
   container is the sandbox here) and gives every run a profile of its
@@ -22,10 +22,25 @@ and this project uses [semantic versioning](https://semver.org/).
   profile refuse to start). The browser tools find it: it is named
   chromium, so it comes first on the PATH, and IMPECCABLE_BROWSER,
   CHROME_PATH and PUPPETEER_EXECUTABLE_PATH point at it.
+- ~/.local/bin is on the PATH in a box, so a program the user installed
+  once is found in every box.
+- TMPDIR in a box points at a scratch folder of that box's own, in the
+  home folder: the temporary files tools make survive the box, which
+  /tmp does not.
+- A box leaves a note in ~/.orca-box.md saying what survives and what
+  does not, for the agents that work in it.
 - ORCA_BOX_SHM_SIZE (1g): the shared memory a box gets. The default 64MB
   the engines give is too little for a browser.
 - ORCA_BOX_BROWSER (1): set it to 0 to build the image without the
   browser and Playwright, for the images that do not want them.
+
+### Fixed
+- The browser in a box survives the box being thrown away and made
+  again. A box is thrown away when nothing has been running in it for a
+  couple of minutes, and the next launch makes a new one -- with an
+  empty /tmp, and without anything the agent had put there. The home
+  folder is a volume, so it survives; that is where the tools that have
+  to outlive a box belong.
 
 ## [1.7.19]
 

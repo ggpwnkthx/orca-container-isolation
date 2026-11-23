@@ -203,9 +203,9 @@ skills).
   it. A browser dropped into an image by hand is missing half of itself
   (`libnspr4.so` and the rest), and cannot start.
 - **Playwright**, in Node and in Python, with the browser it drives. The
-  browsers live in `/opt/ms-playwright`, not in the home folder: the
-  boxes share one home volume, and a browser installed under it would be
-  hidden by that volume.
+  agents look for the browsers in `~/.cache/ms-playwright`, in the home
+  folder, so a browser an agent installs survives the box; the ones the
+  image brought along are linked in there when the box starts.
 - **Fonts**, because a page with no font in it is a page of boxes, and a
   screenshot of that tells nobody anything.
 - A **wrapper** at `/usr/local/bin/chromium`, which is what the browser
@@ -214,10 +214,32 @@ skills).
   sandbox off -- the boxes drop every capability, so it cannot start, and
   the container is the sandbox here -- and gives every run a profile of
   its own, because the boxes share one home folder.
+- `~/.local/bin` on the `PATH`, so a program the user installed once is
+  found in every box.
 
 The browser makes the image about a gigabyte bigger, and the first build
 takes a few minutes longer. Build the image without it by setting
 `ORCA_BOX_BROWSER=0` before the build.
+
+### What survives, and what does not
+
+A box is thrown away when nothing has been running in it for a couple of
+minutes, and the next launch makes a new one. That is the difference
+between a box and a container you leave running, and it catches people
+out: everything in the container's own filesystem goes with it, `/tmp`
+included.
+
+Two things survive:
+
+- the **home folder**, which is a volume shared by every box, so a
+  login, a downloaded browser, an installed tool and a note are all still
+  there in the next box;
+- the **worktree**, which is mounted from the host.
+
+`TMPDIR` points at a scratch folder of this box's own, in the home
+folder, so the temporary files tools make survive as well. The box also
+leaves a note about all of this in `~/.orca-box.md`, for the agents that
+work in it.
 
 ## What it needs
 
