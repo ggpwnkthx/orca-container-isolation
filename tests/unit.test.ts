@@ -299,6 +299,20 @@ function engineLog(result: {
 }
 
 describe("running a box", () => {
+  test("the mock engine runs", () => {
+    // The program starts the engine by name; the mock has to work.
+    const log = join(work, "mock.log");
+    const proc = Bun.spawnSync([join(bin, mockName("podman")), "info"], {
+      env: { ...process.env, FAKE_LOG: log },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(`exit ${proc.exitCode}\\n${new TextDecoder().decode(proc.stderr)}`).toBe(
+      "exit 0\\n",
+    );
+    expect(readFileSync(log, "utf8")).toContain("PODMAN info");
+  });
+
   test("it runs the agent in the workspace's box", () => {
     // The box is made here, so the log says which worktree it is for.
     const result = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });

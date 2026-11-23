@@ -14,7 +14,7 @@ import { hasCommand, runIfPresent } from "./which.ts";
 import { paths } from "./paths.ts";
 import { isMac, isWindows, programAsset, programAssetUrl } from "./platform.ts";
 import { VERSION } from "./version.ts";
-import { boxIds, engineBinary } from "./engine.ts";
+import { boxIds, engineBinary, spawnProgram } from "./engine.ts";
 
 /**
  * Where the update is fetched from.
@@ -413,7 +413,7 @@ export async function update(options: UpdateOptions): Promise<void> {
 /** Remove every box. */
 function archiveAll(): void {
   for (const id of boxIds()) {
-    Bun.spawnSync([engineBinary(), "rm", "-f", id], {
+    spawnProgram(engineBinary(), ["rm", "-f", id], {
       stdout: "ignore",
       stderr: "ignore",
     });

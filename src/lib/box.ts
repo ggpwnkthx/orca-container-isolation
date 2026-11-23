@@ -35,6 +35,8 @@ import {
   runCaptured,
   runInteractive,
   securityArgs,
+  spawnEngine,
+  spawnProgram,
   userArgs,
   worktreeOf,
 } from "./engine.ts";
@@ -623,7 +625,7 @@ export async function runAgent(args: string[]): Promise<void> {
     .filter(Boolean)) {
     const path = worktreeOf(id);
     if (path && !existsSync(path)) {
-      Bun.spawnSync([engineBinary(), "rm", "-f", id], {
+      spawnProgram(engineBinary(), ["rm", "-f", id], {
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
@@ -659,9 +661,8 @@ export async function runAgent(args: string[]): Promise<void> {
 
   if (!target.worktree) {
     prepareHome();
-    const proc = Bun.spawn(
+    const proc = spawnEngine(
       [
-        engineBinary(),
         "run",
         "--rm",
         ...io,
@@ -713,7 +714,7 @@ export async function runAgent(args: string[]): Promise<void> {
         state = boxState(name);
         if (!state.startsWith("true 2 ")) {
           if (state) {
-            Bun.spawnSync([engineBinary(), "rm", "-f", name], {
+            spawnProgram(engineBinary(), ["rm", "-f", name], {
               stdout: "ignore",
               stderr: "ignore",
               stdin: "ignore",
@@ -736,9 +737,8 @@ export async function runAgent(args: string[]): Promise<void> {
     const git = gitMounts(target, gitMode);
     mounts.push(...git.mounts);
     prepareHome();
-    const proc = Bun.spawn(
+    const proc = spawnEngine(
       [
-        engineBinary(),
         "run",
         "-d",
         "--rm",
@@ -803,9 +803,8 @@ export async function runAgent(args: string[]): Promise<void> {
     );
   }
 
-  const proc = Bun.spawn(
+  const proc = spawnEngine(
     [
-      engineBinary(),
       "exec",
       ...io,
       "-w",
@@ -822,7 +821,7 @@ export async function runAgent(args: string[]): Promise<void> {
 export function archive(all: boolean): void {
   const remove = (id: string): void => {
     plain(`removing ${nameOf(id)}`);
-    Bun.spawnSync([engineBinary(), "rm", "-f", id], {
+    spawnProgram(engineBinary(), ["rm", "-f", id], {
       stdout: "ignore",
       stderr: "ignore",
       stdin: "ignore",

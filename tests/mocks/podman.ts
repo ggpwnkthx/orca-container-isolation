@@ -16,7 +16,14 @@
 import { appendFileSync } from "node:fs";
 
 const log = process.env.FAKE_LOG ?? "/tmp/fake-podman.log";
-appendFileSync(log, `PODMAN ${process.argv.slice(2).join(" ")}\n`);
+try {
+  appendFileSync(log, `PODMAN ${process.argv.slice(2).join(" ")}\n`);
+} catch (err) {
+  // The log is for the tests to read; the engine still has to answer.
+  process.stderr.write(
+    `the mock engine could not write its log (${log}): ${(err as Error).message}\n`,
+  );
+}
 
 const args = process.argv.slice(2);
 const existing = process.env.FAKE_EXISTING ?? "1";

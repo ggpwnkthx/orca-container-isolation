@@ -7,6 +7,17 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.12]
+
+### Fixed
+- The container engine is looked up on the PATH and started by
+  its full path, and by its name as well, so that Windows finds it
+  whichever way the system resolves a program.
+
+### Changed
+- The tests say whether the mock engine itself runs, so that a
+  failure says which part is at fault.
+
 ## [1.7.11]
 
 ### Fixed

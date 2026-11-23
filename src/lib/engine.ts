@@ -17,12 +17,9 @@ export type EngineMode = "podman" | "docker" | "docker-rootless";
 let mode: EngineMode | null = null;
 
 /** The engine binary: "podman" or "docker". */
-export function engineBinary(): string {
+export function engineBinary(): "podman" | "docker" {
   if (mode === null) initEngine();
-  const name = mode === "podman" ? "podman" : "docker";
-  // The full path, so that the program is started without the system
-  // having to guess the extension (Windows keeps it).
-  return findCommand(name) || name;
+  return mode === "podman" ? "podman" : "docker";
 }
 
 /** The full mode, including whether Docker is rootless. */
@@ -141,23 +138,59 @@ function detectMode(): EngineMode | null {
 }
 
 /**
- * A program on the PATH, by its full path.
+ * The programs to try for a name: its full path, and the name itself.
  *
  * Windows keeps the extension, and the system does not always add it
- * when a program is started by name, so the program is looked up first.
+ * when a program is started by name, so both are tried.
  */
-function program(bin: string): string {
-  return findCommand(bin) || bin;
+export function programs(bin: string): string[] {
+  const full = findCommand(bin);
+  return full && full !== bin ? [full, bin] : [bin];
+}
+
+/** Start a program, by its full path or by its name. */
+export function spawnProgram(
+  bin: string,
+  args: string[],
+  options: Parameters<typeof Bun.spawnSync>[1],
+): ReturnType<typeof Bun.spawnSync> | null {
+  let last: unknown = null;
+  for (const candidate of programs(bin)) {
+    try {
+      return Bun.spawnSync([candidate, ...args], options);
+    } catch (err) {
+      last = err;
+    }
+  }
+  if (last) throw last;
+  return null;
+}
+
+/** Start a program and wait for it, by its full path or by its name. */
+export function spawnEngine(
+  args: string[],
+  options: Parameters<typeof Bun.spawn>[1],
+): Bun.Subprocess {
+  const bin = engineBinary();
+  let last: unknown = null;
+  for (const candidate of programs(bin)) {
+    try {
+      return Bun.spawn([candidate, ...args], options);
+    } catch (err) {
+      last = err;
+    }
+  }
+  throw last;
 }
 
 function commandWorks(bin: string, args: string[]): boolean {
   try {
-    const proc = Bun.spawnSync([program(bin), ...args], {
+    const proc = spawnProgram(bin, args, {
       stdout: "ignore",
       stderr: "ignore",
       stdin: "ignore",
     });
-    return proc.exitCode === 0;
+    return proc ? proc.exitCode === 0 : false;
   } catch {
     return false;
   }
@@ -176,12 +209,12 @@ export function rememberEngine(): void {
  * error messages.
  */
 export function runCaptured(bin: string, args: string[]): string {
-  const proc = Bun.spawnSync([program(bin), ...args], {
+  const proc = spawnProgram(bin, args, {
     stdout: "pipe",
     stderr: "inherit",
     stdin: "ignore",
   });
-  return new TextDecoder().decode(proc.stdout);
+  return proc ? new TextDecoder().decode(proc.stdout) : "";
 }
 
 /**

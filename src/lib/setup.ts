@@ -32,6 +32,7 @@ import {
   initEngine,
   nameOf,
   rememberEngine,
+  spawnProgram,
 } from "./engine.ts";
 import { containerfile } from "../assets/skill-sync.ts";
 import { configure, runningOrca, userDataDir } from "./orca.ts";
@@ -201,19 +202,19 @@ export async function uninstall(options: SetupOptions): Promise<void> {
     say(`Removing orca-box containers (${engineBinary()})`);
     for (const id of boxIds()) {
       plain(`    ${nameOf(id)}`);
-      Bun.spawnSync([engineBinary(), "rm", "-f", id], {
+      spawnProgram(engineBinary(), ["rm", "-f", id], {
         stdout: "ignore",
         stderr: "ignore",
       });
     }
     say(`Removing image ${setting("ORCA_BOX_IMAGE")}`);
-    Bun.spawnSync([engineBinary(), "rmi", "-f", setting("ORCA_BOX_IMAGE")], {
+    spawnProgram(engineBinary(), ["rmi", "-f", setting("ORCA_BOX_IMAGE")], {
       stdout: "ignore",
       stderr: "ignore",
     });
     if (options.purge) {
       say(`Deleting saved logins (volume ${setting("ORCA_BOX_HOME_VOLUME")})`);
-      Bun.spawnSync([engineBinary(), "volume", "rm", "-f", setting("ORCA_BOX_HOME_VOLUME")], {
+      spawnProgram(engineBinary(), ["volume", "rm", "-f", setting("ORCA_BOX_HOME_VOLUME")], {
         stdout: "ignore",
         stderr: "ignore",
       });
@@ -522,7 +523,7 @@ function writeWindowsShim(shim: string, program: string, tool: string): void {
 /** Remove every box. */
 function archiveAll(): void {
   for (const id of boxIds()) {
-    Bun.spawnSync([engineBinary(), "rm", "-f", id], {
+    spawnProgram(engineBinary(), ["rm", "-f", id], {
       stdout: "ignore",
       stderr: "ignore",
     });
