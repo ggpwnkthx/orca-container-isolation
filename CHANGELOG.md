@@ -7,6 +7,13 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.9]
+
+### Fixed
+- The programs the box starts are now found on the PATH and
+  started by their full path, so that Windows finds them without having
+  to guess the extension.
+
 ## [1.7.8]
 
 ### Changed

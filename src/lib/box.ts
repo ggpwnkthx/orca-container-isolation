@@ -42,7 +42,7 @@ import { skillSyncScript } from "../assets/skill-sync.ts";
 import { isMac, isShareableOnMac, isWindows } from "./platform.ts";
 import { containerPath } from "./hostpath.ts";
 import { die, plain, warn } from "./output.ts";
-import { hasCommand, runIfPresent } from "./which.ts";
+import { findCommand, hasCommand, runIfPresent } from "./which.ts";
 
 /** The folders the agents read skills from, on the host and in the box. */
 export const SKILL_DIRS = [".agents/skills", ".claude/skills", ".codex/skills", ".pi/agent/skills"];
@@ -73,7 +73,7 @@ export function resolveTarget(): Target {
   let worktree = "";
   let common = "";
 
-  const top = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
+  const top = Bun.spawnSync([gitBinary(), "rev-parse", "--show-toplevel"], {
     stdout: "pipe",
     stderr: "ignore",
     stdin: "ignore",
@@ -84,13 +84,13 @@ export function resolveTarget(): Target {
     // git 2.31 and newer; older versions (some macOS installs) get the
     // plain one, which is relative to the worktree.
     const dir = Bun.spawnSync(
-      ["git", "-C", worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+      [gitBinary(), "-C", worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"],
       { stdout: "pipe", stderr: "ignore", stdin: "ignore" },
     );
     common = new TextDecoder().decode(dir.stdout).trim();
     if (!common) {
       const old = Bun.spawnSync(
-        ["git", "-C", worktree, "rev-parse", "--git-common-dir"],
+        [gitBinary(), "-C", worktree, "rev-parse", "--git-common-dir"],
         { stdout: "pipe", stderr: "ignore", stdin: "ignore" },
       );
       const relative = new TextDecoder().decode(old.stdout).trim();
@@ -323,6 +323,16 @@ function gitDirOf(worktree: string): string {
   const plain = runCaptured("git", ["-C", worktree, "rev-parse", "--git-dir"]).trim();
   if (!plain) return "";
   return isAbsolute(plain) ? plain : join(worktree, plain);
+}
+
+/**
+ * Git, found on the PATH.
+ *
+ * The full path, so that the program is started without the system
+ * having to guess the extension (Windows keeps it).
+ */
+function gitBinary(): string {
+  return findCommand("git") || "git";
 }
 
 /** The name of a box, derived from its worktree. */
@@ -824,7 +834,7 @@ export function archive(all: boolean): void {
     return;
   }
 
-  const top = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
+  const top = Bun.spawnSync([gitBinary(), "rev-parse", "--show-toplevel"], {
     stdout: "pipe",
     stderr: "ignore",
     stdin: "ignore",

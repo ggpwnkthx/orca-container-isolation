@@ -10,16 +10,19 @@ import { join } from "node:path";
 import { CONFIG_FILE_DIR, setting } from "./config.ts";
 import { isMac, isWindows } from "./platform.ts";
 import { die, warn } from "./output.ts";
-import { hasCommand } from "./which.ts";
+import { findCommand, hasCommand } from "./which.ts";
 
 export type EngineMode = "podman" | "docker" | "docker-rootless";
 
 let mode: EngineMode | null = null;
 
 /** The engine binary: "podman" or "docker". */
-export function engineBinary(): "podman" | "docker" {
+export function engineBinary(): string {
   if (mode === null) initEngine();
-  return mode === "podman" ? "podman" : "docker";
+  const name = mode === "podman" ? "podman" : "docker";
+  // The full path, so that the program is started without the system
+  // having to guess the extension (Windows keeps it).
+  return findCommand(name) || name;
 }
 
 /** The full mode, including whether Docker is rootless. */

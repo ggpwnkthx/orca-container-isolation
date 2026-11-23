@@ -13,20 +13,31 @@ import { isWindows } from "./platform.ts";
 
 /** Is there an executable by this name on PATH? */
 export function hasCommand(name: string): boolean {
+  return findCommand(name) !== "";
+}
+
+/**
+ * The full path of a program on PATH, or "" if it isn't there.
+ *
+ * Windows keeps the extension: the program is podman.exe, and the name
+ * the program asks for is podman. The path is returned rather than the
+ * name, so that the program can be started without the system having
+ * to guess the extension.
+ */
+export function findCommand(name: string): string {
   if (name.includes("/") || name.includes("\\")) {
-    return isExecutable(name);
+    return isExecutable(name) ? name : "";
   }
   const path = process.env.PATH ?? "";
-  // Windows keeps the extension: the program is podman.exe, and the name
-  // the program asks for is podman.
   const names = isWindows() ? [name, `${name}.exe`] : [name];
   for (const dir of path.split(delimiter)) {
     if (!dir) continue;
     for (const candidate of names) {
-      if (isExecutable(join(dir, candidate))) return true;
+      const full = join(dir, candidate);
+      if (isExecutable(full)) return full;
     }
   }
-  return false;
+  return "";
 }
 
 /** Is this path a file we can run? */
@@ -51,9 +62,12 @@ export function runIfPresent(
   args: string[],
   options: Parameters<typeof Bun.spawnSync>[1] = { stdout: "ignore", stderr: "ignore" },
 ): number {
-  if (!hasCommand(bin)) return -1;
+  // The full path, so that the program is started without the system
+  // having to guess the extension (Windows keeps it).
+  const full = findCommand(bin);
+  if (!full) return -1;
   try {
-    return Bun.spawnSync([bin, ...args], options).exitCode ?? 0;
+    return Bun.spawnSync([full, ...args], options).exitCode ?? 0;
   } catch {
     return -1;
   }
