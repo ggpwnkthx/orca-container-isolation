@@ -7,6 +7,20 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.17]
+
+### Fixed
+- The macOS build runs on the Intel runner image. `macos-latest` is the
+  arm64 image now, and the arm64 pool is much smaller, so the job waited
+  a long time for a runner -- twenty-five minutes in one run -- before
+  it started.
+
+### Changed
+- The CI does less: the program has no npm packages, so the jobs that
+  only build it install no dependencies, the release no longer repeats
+  the tests that have already run, and the Linux job builds every
+  platform once instead of twice.
+
 ## [1.7.16]
 
 ### Changed
