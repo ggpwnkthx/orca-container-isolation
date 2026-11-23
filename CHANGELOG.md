@@ -7,6 +7,8 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.20]
+
 ### Added
 - The agent image has a browser in it, so the skills that look at a page
   work: Chromium from Debian (with the shared libraries it needs -- a
@@ -33,6 +35,11 @@ and this project uses [semantic versioning](https://semver.org/).
   the engines give is too little for a browser.
 - ORCA_BOX_BROWSER (1): set it to 0 to build the image without the
   browser and Playwright, for the images that do not want them.
+- The boxes say which orca-box made them: the label orca.version on the
+  container, ORCA_BOX_VERSION in the box's environment, and
+  ORCA_BOX_IMAGE_VERSION (and the same label) in the image. A box made
+  by an older orca-box says so when it is used, instead of the agent
+  finding an older image and wondering about it.
 
 ### Fixed
 - The browser in a box survives the box being thrown away and made
@@ -41,13 +48,6 @@ and this project uses [semantic versioning](https://semver.org/).
   empty /tmp, and without anything the agent had put there. The home
   folder is a volume, so it survives; that is where the tools that have
   to outlive a box belong.
-
-### Added
-- The boxes say which orca-box made them: the label orca.version on the
-  container, ORCA_BOX_VERSION in the box's environment, and
-  ORCA_BOX_IMAGE_VERSION (and the same label) in the image. A box made
-  by an older orca-box says so when it is used, instead of the agent
-  finding an older image and wondering about it.
 
 ## [1.7.19]
 
