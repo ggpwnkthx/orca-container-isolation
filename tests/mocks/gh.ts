@@ -4,6 +4,11 @@
  * orca-box asks the host's gh for the token it is logged in with, because
  * on macOS and Windows the token is in the system credential store and in
  * no file. This answers that one question.
+ *
+ * Environment:
+ *   FAKE_GH_TOKEN   the token to answer with; empty means "not logged in"
+ *   FAKE_GH_HOST    the host it is logged in to. When it is not set, the
+ *                   token is given for any host that is asked for.
  */
 
 const args = process.argv.slice(2);
@@ -13,6 +18,16 @@ if (args[0] === "auth" && args[1] === "token") {
   // there is no credential.
   const token = process.env.FAKE_GH_TOKEN ?? "gho_testtoken";
   if (!token) process.exit(1);
+  // gh asks for the token of a host by name.
+  const at = args.indexOf("--hostname");
+  if (at >= 0) {
+    const host = args[at + 1] ?? "";
+    const loggedIn = process.env.FAKE_GH_HOST;
+    if (loggedIn && host !== loggedIn) {
+      process.stderr.write(`no oauth token found for ${host}\n`);
+      process.exit(1);
+    }
+  }
   console.log(token);
   process.exit(0);
 }

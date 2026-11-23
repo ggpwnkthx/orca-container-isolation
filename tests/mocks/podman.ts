@@ -9,6 +9,9 @@
  *
  * Environment:
  *   FAKE_LOG        file to append the command log to
+ *   FAKE_ENV_LOG    file to append the environment the engine was started
+ *                   with to. It is a file of its own, so that the token
+ *                   does not end up in the command log.
  *   FAKE_EXISTING   1 (default) if a box already exists, 0 if not
  *   FAKE_GIT        the git mode of the existing box (ro/rw)
  *   FAKE_GH         whether the existing box has the gh credentials (0/1)
@@ -24,6 +27,20 @@ try {
   process.stderr.write(
     `the mock engine could not write its log (${log}): ${(err as Error).message}\n`,
   );
+}
+
+// The environment the engine was started with: the values the engine
+// passes on to the container come from there.
+const envLog = process.env.FAKE_ENV_LOG;
+if (envLog) {
+  try {
+    appendFileSync(
+      envLog,
+      `GH_TOKEN=${process.env.GH_TOKEN ?? ""} GH_HOST=${process.env.GH_HOST ?? ""} GITHUB_ENTERPRISE_TOKEN=${process.env.GITHUB_ENTERPRISE_TOKEN ?? ""}\n`,
+    );
+  } catch {
+    // The log is for the tests to read.
+  }
 }
 
 const args = process.argv.slice(2);

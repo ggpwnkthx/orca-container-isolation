@@ -7,6 +7,27 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.18]
+
+### Fixed
+- The gh token reaches the containers. The token was put in the
+  program's own environment and passed to the engine by name (`-e
+  GH_TOKEN`), but the engine takes the value of a variable it is given
+  by name from the environment *it* is started with -- and a variable set
+  in the program's environment is not in that one. So the containers got
+  no token at all: the settings folder was mounted, but the token, which
+  on macOS and Windows is in no file to mount, never arrived, and the
+  agent's gh was not logged in. The values now go to the engine with
+  it.
+- A GitHub Enterprise host gets the token as GITHUB_ENTERPRISE_TOKEN,
+  which is the name gh looks for there: gh ignores GH_TOKEN for an
+  enterprise host, so the agent's gh was not logged in to it.
+- The host's gh is asked for the token of the host it is logged in to,
+  so the token and the host that goes with it agree.
+- The gh settings folder is mounted only when there are credentials in
+  it. An empty folder hid the credentials a box wrote to the shared
+  home, so signing in inside a box (orca-box-login) was lost.
+
 ## [1.7.17]
 
 ### Fixed

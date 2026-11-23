@@ -210,16 +210,31 @@ export function spawnProgram(
   return null;
 }
 
-/** Start a program and wait for it, by its full path or by its name. */
+/**
+ * Start a program and wait for it, by its full path or by its name.
+ *
+ * `extraEnv` adds variables to the engine's own environment. The engine
+ * passes a variable on to the container when it is named in its arguments
+ * without a value (`-e NAME`), and it takes the value from its own
+ * environment -- so this is how a token reaches the container without
+ * being in the command line.
+ */
 export function spawnEngine(
   args: string[],
   options: Parameters<typeof Bun.spawn>[1],
+  extraEnv?: Record<string, string>,
 ): Bun.Subprocess {
   const bin = engineBinary();
+  // A variable set in this process's environment is not in the
+  // environment the engine is started with, so the values are passed on
+  // explicitly.
+  const spawnOptions = extraEnv
+    ? { ...options, env: { ...process.env, ...extraEnv } }
+    : options;
   let last: unknown = null;
   for (const candidate of programs(bin)) {
     try {
-      return Bun.spawn([candidate, ...args], options);
+      return Bun.spawn([candidate, ...args], spawnOptions);
     } catch (err) {
       last = err;
     }

@@ -103,11 +103,14 @@ function buildMock(name: string, out: string): void {
 function run(args: string[], env: Record<string, string> = {}): {
   output: string;
   log: string;
+  envLog: string;
   code: number;
   path: string;
 } {
   const log = join(work, "engine.log");
+  const envLog = join(work, "engine-env.log");
   writeFileSync(log, "");
+  writeFileSync(envLog, "");
   const path = `${bin}${delimiter}${process.env.PATH ?? ""}`;
   const proc = Bun.spawnSync(
     [process.execPath, join(import.meta.dir, "..", "src", "main.ts"), ...args],
@@ -126,6 +129,7 @@ function run(args: string[], env: Record<string, string> = {}): {
         LOCALAPPDATA: join(home, "AppData", "Local"),
         PATH: path,
         FAKE_LOG: log,
+        FAKE_ENV_LOG: envLog,
         ...env,
       },
       stdout: "pipe",
@@ -135,6 +139,7 @@ function run(args: string[], env: Record<string, string> = {}): {
   return {
     output: `${new TextDecoder().decode(proc.stdout)}${new TextDecoder().decode(proc.stderr)}`,
     log: readFileSync(log, "utf8"),
+    envLog: readFileSync(envLog, "utf8"),
     code: proc.exitCode ?? 0,
     path,
   };
@@ -279,6 +284,19 @@ function ghDir(): string {
 }
 
 /**
+ * Put a hosts.yml in the test home, and return the way to take it away.
+ *
+ * The file is what says the host's gh has credentials to share.
+ */
+function writeHosts(host: string): () => void {
+  const dir = ghDir();
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "hosts.yml");
+  writeFileSync(file, `${host}:\n    user: test\n    git_protocol: ssh\n`);
+  return () => rmSync(file, { force: true });
+}
+
+/**
  * The engine's log, and what the program said.
  *
  * Both are looked at, so that a failure says why the engine was not
@@ -372,11 +390,26 @@ describe("running a box", () => {
     const without = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
     expect(without.log).not.toContain(ghDir());
 
-    const with_ = run(["orca-box", "claude"], {
+    const hosts = writeHosts("github.com");
+    try {
+      const with_ = run(["orca-box", "claude"], {
+        FAKE_EXISTING: "0",
+        ORCA_BOX_GH_AUTH: "1",
+      });
+      expect(engineLog(with_)).toContain(`${ghDir()}:/home/node/.config/gh:ro`);
+    } finally {
+      hosts();
+    }
+  });
+
+  test("a gh folder with no credentials in it is not mounted", () => {
+    // An empty folder would hide the credentials a box wrote to the
+    // shared home (orca-box-login), and the sign-in would be lost.
+    const result = run(["orca-box", "claude"], {
       FAKE_EXISTING: "0",
       ORCA_BOX_GH_AUTH: "1",
     });
-    expect(engineLog(with_)).toContain(`${ghDir()}:/home/node/.config/gh:ro`);
+    expect(result.log).not.toContain(ghDir());
   });
 
   test("the box says whether it was made with the gh credentials", () => {
@@ -404,6 +437,35 @@ describe("running a box", () => {
     expect(result.log).not.toContain("gho_testtoken");
   });
 
+  test("the gh token reaches the container", () => {
+    // The engine takes the value of a variable it is given by name from
+    // its own environment, so the token has to be in the environment the
+    // engine is started with. A variable set in the program's own
+    // environment is not: it has to be passed on.
+    const result = run(["orca-box", "claude"], {
+      FAKE_EXISTING: "0",
+      ORCA_BOX_GH_AUTH: "1",
+    });
+    expect(result.envLog).toContain("GH_TOKEN=gho_testtoken");
+  });
+
+  test("an enterprise host gets the token under the name gh looks for", () => {
+    // gh ignores GH_TOKEN for an enterprise host: there it looks for
+    // GITHUB_ENTERPRISE_TOKEN.
+    const hosts = writeHosts("ghe.example.com");
+    try {
+      const result = run(["orca-box", "claude"], {
+        FAKE_EXISTING: "0",
+        ORCA_BOX_GH_AUTH: "1",
+      });
+      expect(result.log).toContain("-e GITHUB_ENTERPRISE_TOKEN");
+      expect(result.envLog).toContain("GITHUB_ENTERPRISE_TOKEN=gho_testtoken");
+      expect(result.envLog).toContain("GH_HOST=ghe.example.com");
+    } finally {
+      hosts();
+    }
+  });
+
   test("no token is passed when the host is not logged in", () => {
     const result = run(["orca-box", "claude"], {
       FAKE_EXISTING: "0",
@@ -415,10 +477,7 @@ describe("running a box", () => {
 
   test("the gh host is passed with the token", () => {
     // A GitHub Enterprise host: gh has to be told which one to use.
-    writeFileSync(
-      join(home, ".config", "gh", "hosts.yml"),
-      "ghe.example.com:\n    user: test\n    git_protocol: ssh\n",
-    );
+    const hosts = writeHosts("ghe.example.com");
     try {
       const result = run(["orca-box", "claude"], {
         FAKE_EXISTING: "0",
@@ -426,7 +485,7 @@ describe("running a box", () => {
       });
       expect(result.log).toContain("-e GH_HOST");
     } finally {
-      rmSync(join(home, ".config", "gh", "hosts.yml"), { force: true });
+      hosts();
     }
   });
 

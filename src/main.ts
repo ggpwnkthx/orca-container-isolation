@@ -62,9 +62,10 @@ What the container can see:
     credentials: your gh settings folder is mounted read-only, and your
     token is passed in the environment. The token is asked of the host's
     gh, because gh keeps it in the system credential store (the keychain
-    on macOS, the credential manager on Windows), not in a file. Whoever
-    runs in the box can read that token, so only turn this on when you
-    want that.
+    on macOS, the credential manager on Windows), not in a file. A
+    GitHub Enterprise host also gets it as GITHUB_ENTERPRISE_TOKEN,
+    which is the name gh looks for there. Whoever runs in the box can
+    read that token, so only turn this on when you want that.
 It cannot see the rest of your home directory, ~/.ssh, or other repos.
 Run outside a repo (from ~, a ~/.dotdir or outside ~), it gets a throwaway
 box with no host files at all; from another folder under ~, just that folder.

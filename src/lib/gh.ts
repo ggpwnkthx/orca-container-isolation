@@ -14,6 +14,10 @@
  *
  * So the token is asked for, and passed in the environment, and the
  * folder is mounted as well, for the settings and for Linux.
+ *
+ * The token comes with the host it belongs to, because gh looks for the
+ * token of an enterprise host under another name (GITHUB_ENTERPRISE_TOKEN)
+ * and ignores GH_TOKEN there.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -51,30 +55,65 @@ export function hostGhState(): {
   };
 }
 
+/** The credentials the host has: a token, and the host it belongs to. */
+export interface GhCredentials {
+  /** The host the token belongs to, or "" when it is not known. */
+  host: string;
+  /** The token, or "" when there is none. */
+  token: string;
+}
+
 /**
- * The token the host is logged in with, if any.
+ * The credentials the host has, if any.
  *
  * The environment first, then the host's gh: it knows about the keychain
  * and the credential manager, so it can hand over a token that is not in
  * any file.
+ *
+ * The token and the host go together: gh asks for the token of a host by
+ * name, so the token that comes back is the one that belongs to the host
+ * that is passed on with it.
  */
-export function hostGhToken(): string | null {
+export function hostGhCredentials(): GhCredentials {
+  const host = hostGhHost();
   const fromEnv = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
-  if (fromEnv) return fromEnv;
+  if (fromEnv) return { host, token: fromEnv };
 
   const gh = findCommand("gh");
-  if (!gh) return null;
+  if (!gh) return { host, token: "" };
+
+  if (host) {
+    // The token of that host, so the two agree. gh versions before
+    // 2.36 do not know --hostname, so the plain question is the fallback.
+    const token = ghToken(gh, ["auth", "token", "--hostname", host]);
+    if (token) return { host, token };
+    // The host's gh is not logged in to that host, so its token belongs
+    // to another one: ask without a host, and leave the host unset, so
+    // gh in the box asks the host the host's gh asked.
+    return { host: "", token: ghToken(gh, ["auth", "token"]) };
+  }
+  return { host: "", token: ghToken(gh, ["auth", "token"]) };
+}
+
+/**
+ * The token the host is logged in with, if any.
+ */
+export function hostGhToken(): string | null {
+  return hostGhCredentials().token || null;
+}
+
+/** Ask the host's gh for a token. Empty when there is none. */
+function ghToken(gh: string, args: string[]): string {
   try {
-    const proc = Bun.spawnSync([gh, "auth", "token"], {
+    const proc = Bun.spawnSync([gh, ...args], {
       stdout: "pipe",
       stderr: "ignore",
       stdin: "ignore",
     });
-    if (proc.exitCode !== 0) return null;
-    const token = new TextDecoder().decode(proc.stdout).trim();
-    return token || null;
+    if (proc.exitCode !== 0) return "";
+    return new TextDecoder().decode(proc.stdout).trim();
   } catch {
-    return null;
+    return "";
   }
 }
 

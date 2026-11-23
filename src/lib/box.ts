@@ -24,7 +24,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { createHash } from "node:crypto";
 import { setting } from "./config.ts";
-import { defaultGhDir, hostGhHost, hostGhToken } from "./gh.ts";
+import { defaultGhDir, hostGhCredentials } from "./gh.ts";
 import {
   boxIds,
   engineBinary,
@@ -189,35 +189,52 @@ export function skillMounts(): { mounts: string[]; sync: string } {
  * always where the token is: gh keeps it in the system credential store
  * (the keychain on macOS, the credential manager on Windows), so on those
  * platforms the mounted folder alone would leave the agent with a gh that
- * is not logged in. It is passed by name, not by value, so the token is
- * not in the command line, where every process on the machine could read
- * it.
+ * is not logged in.
+ *
+ * The token is passed by name, not by value, so it is not in the command
+ * line, where every process on the machine could read it. The engine
+ * takes the value from its own environment, so the values go with it
+ * (`vars`): the engine passes them on to the container.
  */
-export function ghMounts(): { mounts: string[]; env: string[] } {
+export function ghMounts(): {
+  mounts: string[];
+  env: string[];
+  vars: Record<string, string>;
+} {
   const mounts: string[] = [];
   const env: string[] = [];
-  if (setting("ORCA_BOX_GH_AUTH") !== "1") return { mounts, env };
+  // The values the engine passes on to the container.
+  const vars: Record<string, string> = {};
+  if (setting("ORCA_BOX_GH_AUTH") !== "1") return { mounts, env, vars };
 
   const ghDir = process.env.GH_CONFIG_DIR ?? defaultGhDir();
-  if (existsSync(ghDir)) {
+  // The folder is mounted only when there are credentials in it to
+  // share. An empty folder would hide the credentials a box wrote to the
+  // shared home (orca-box-login), and the sign-in would be lost.
+  if (existsSync(join(ghDir, "hosts.yml"))) {
     mounts.push("-v", `${ghDir}:/home/node/.config/gh${mountOpt("ro")}`);
   }
 
   // The token, and the host it belongs to.
-  const token = hostGhToken();
+  const { host, token } = hostGhCredentials();
   if (token) {
-    process.env.GH_TOKEN = token;
+    vars.GH_TOKEN = token;
     env.push("-e", "GH_TOKEN");
+    if (host && host !== "github.com") {
+      // gh looks for the token of an enterprise host under its own name,
+      // and ignores GH_TOKEN there.
+      vars.GITHUB_ENTERPRISE_TOKEN = token;
+      env.push("-e", "GITHUB_ENTERPRISE_TOKEN");
+    }
   }
-  const host = hostGhHost();
   if (host) {
-    process.env.GH_HOST = host;
+    vars.GH_HOST = host;
     env.push("-e", "GH_HOST");
   }
   // A token in the environment under the other name, for the tools that
   // look for that one.
   if (process.env.GITHUB_TOKEN) env.push("-e", "GITHUB_TOKEN");
-  return { mounts, env };
+  return { mounts, env, vars };
 }
 
 /** The .git mounts for the box, and the git environment that goes with them. */
@@ -718,6 +735,7 @@ export async function runAgent(args: string[]): Promise<void> {
         ...args,
       ],
       { stdout: "inherit", stderr: "inherit", stdin: "inherit" },
+      gh.vars,
     );
     process.exit(await proc.exited);
   }
@@ -805,6 +823,7 @@ export async function runAgent(args: string[]): Promise<void> {
         containerPath(homedir()),
       ],
       { stdout: "ignore", stderr: "inherit", stdin: "ignore" },
+      gh.vars,
     );
     if ((await proc.exited) !== 0) {
       die("orca-box: could not create the box");
@@ -928,11 +947,11 @@ export async function login(args: string[]): Promise<void> {
   // listens on port 1455). Some engines don't have it -- Docker Desktop
   // on macOS only with its host-networking option turned on -- so the
   // login box falls back to the ordinary network.
-  let code = await runLogin(common, ["--network=host"], args);
+  let code = await runLogin(common, ["--network=host"], args, gh.vars);
   if (code === null) {
     plain("This engine doesn't have the host network; logging in without it.");
     plain("    A browser login that calls back to localhost may not finish.");
-    code = await runLogin(common, [], args);
+    code = await runLogin(common, [], args, gh.vars);
   }
   process.exit(code ?? 0);
 }
@@ -948,6 +967,7 @@ async function runLogin(
   common: string[],
   extra: string[],
   args: string[],
+  vars: Record<string, string> = {},
 ): Promise<number | null> {
   const proc = Bun.spawn(
     [
@@ -956,7 +976,13 @@ async function runLogin(
       "-it",
       ...(args.length ? args : ["bash"]),
     ],
-    { stdout: "inherit", stderr: "inherit", stdin: "inherit" },
+    {
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "inherit",
+      // The values the engine passes on to the container.
+      env: { ...process.env, ...vars },
+    },
   );
   const code = await proc.exited;
   // 125 is what the Docker CLI returns when it refuses a flag.
