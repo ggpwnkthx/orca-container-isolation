@@ -8,7 +8,7 @@ run without permission prompts and without reaching the rest of your machine.
 ## Install
 
 Download the program for your machine from the
-[releases page](https://github.com/ggpwnkthx/orca-box/releases/latest) and
+[releases page](https://github.com/ggpwnkthx/orca-container-isolation/releases/latest) and
 run it. There is one file, and it needs nothing else:
 
 | Platform | File |
@@ -34,43 +34,43 @@ runnable and starts it, and the program sets itself up from there.
 **Linux (x64, glibc)**
 
 ```sh
-curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box-linux-x64 -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
+curl -fsSL https://github.com/ggpwnkthx/orca-container-isolation/releases/latest/download/orca-box-linux-x64 -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
 ```
 
 **Linux (x64, musl — Alpine)**
 
 ```sh
-curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box-linux-x64-musl -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
+curl -fsSL https://github.com/ggpwnkthx/orca-container-isolation/releases/latest/download/orca-box-linux-x64-musl -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
 ```
 
 **Linux (arm64, glibc)**
 
 ```sh
-curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box-linux-arm64 -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
+curl -fsSL https://github.com/ggpwnkthx/orca-container-isolation/releases/latest/download/orca-box-linux-arm64 -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
 ```
 
 **Linux (arm64, musl)**
 
 ```sh
-curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box-linux-arm64-musl -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
+curl -fsSL https://github.com/ggpwnkthx/orca-container-isolation/releases/latest/download/orca-box-linux-arm64-musl -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
 ```
 
 **macOS (Apple silicon)**
 
 ```sh
-curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box-darwin-arm64 -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
+curl -fsSL https://github.com/ggpwnkthx/orca-container-isolation/releases/latest/download/orca-box-darwin-arm64 -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
 ```
 
 **macOS (Intel)**
 
 ```sh
-curl -fsSL https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box-darwin-x64 -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
+curl -fsSL https://github.com/ggpwnkthx/orca-container-isolation/releases/latest/download/orca-box-darwin-x64 -o /tmp/orca-box && chmod +x /tmp/orca-box && /tmp/orca-box
 ```
 
 **Windows** (PowerShell)
 
 ```powershell
-Invoke-WebRequest https://github.com/ggpwnkthx/orca-box/releases/latest/download/orca-box-windows-x64.exe -OutFile "$env:TEMP\orca-box.exe"; & "$env:TEMP\orca-box.exe"
+Invoke-WebRequest https://github.com/ggpwnkthx/orca-container-isolation/releases/latest/download/orca-box-windows-x64.exe -OutFile "$env:TEMP\orca-box.exe"; & "$env:TEMP\orca-box.exe"
 ```
 
 If `curl` is not there, `wget -O /tmp/orca-box <url>` does the same

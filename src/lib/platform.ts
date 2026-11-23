@@ -101,7 +101,7 @@ export function programAssetUrl(base = defaultReleaseBase()): string {
 
 /** The project's GitHub repository, for releases. */
 export function defaultReleaseBase(): string {
-  return process.env.ORCA_BOX_REPO_BASE ?? "https://github.com/ggpwnkthx/orca-box";
+  return process.env.ORCA_BOX_REPO_BASE ?? "https://github.com/ggpwnkthx/orca-container-isolation";
 }
 
 /**
