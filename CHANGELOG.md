@@ -7,16 +7,17 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.14]
+
 ### Added
 - The README has a one-line install command for every platform:
   paste it and the program installs itself.
 
 ### Changed
-- Podman is refused on Windows. The boxes mount the worktree at
-  Docker Desktop's path and map the host user onto a Linux uid, and
-  Podman's machine has neither, so the installer now says so and
-  points at Docker Desktop instead of failing later, as a box that
-  will not start.
+- Podman is refused on Windows. The boxes need Docker Desktop's path
+  layout and Linux user ids, which Podman's machine does not have, so
+  the installer says so and points at Docker Desktop instead of
+  failing later, as a box that will not start.
 
 ## [1.7.13]
 
