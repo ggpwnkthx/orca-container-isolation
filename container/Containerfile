@@ -37,6 +37,79 @@ RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent \
  && npm install -g @anthropic-ai/claude-code @openai/codex \
  && npm cache clean --force
 
+# The browser.
+#
+# Some skills look at the page they are working on: they screenshot it,
+# or drive it with a headless browser. So the image has a browser in it.
+#
+# Chromium comes from Debian, so apt picks the package for the machine's
+# architecture and brings the shared libraries with it -- libnspr4 and
+# the rest. Those libraries are why a browser that was put into an image
+# by hand cannot start: it is there, but half of it is not.
+#
+# The libraries the Playwright build of Chromium needs are listed here
+# as well, because it is not the Debian package: same browser, built by
+# somebody else. Playwright's own "install --with-deps" is not used: it
+# only knows the distributions it has been told about, and this image is
+# a base image that moves.
+#
+# The fonts are here for the same reason: a page with no font in it is a
+# page of boxes, and a screenshot of that tells nobody anything. The
+# Chinese font is a large one, but a page of Chinese text that is all
+# boxes is worse.
+#
+# Set ORCA_BOX_BROWSER=0 to build the image without any of this.
+ARG ORCA_BOX_BROWSER=1
+
+# The Playwright browsers live outside the home folder on purpose: the
+# boxes share one home volume, and a browser installed under it would be
+# hidden by that volume at run time.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+ENV IMPECCABLE_BROWSER=/usr/local/bin/chromium
+ENV CHROME_PATH=/usr/local/bin/chromium
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/local/bin/chromium
+
+RUN set -eux; \
+    if [ "$ORCA_BOX_BROWSER" = "1" ]; then \
+      apt-get update; \
+      apt-get install -y --no-install-recommends \
+        chromium \
+        libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 \
+        libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 \
+        libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 \
+        libxfixes3 libxkbcommon0 libxrandr2 \
+        fonts-dejavu-core fonts-liberation fonts-noto-core \
+        fonts-noto-color-emoji fonts-unifont fonts-wqy-zenhei \
+        python3-pip; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Chromium, wrapped.
+#
+# The wrapper drops Chromium's own sandbox (the container is the sandbox
+# here) and gives every run a profile of its own. It is named chromium,
+# so it comes first on the PATH, and the browser variables point at it.
+COPY chromium.sh /usr/local/bin/chromium
+RUN chmod 755 /usr/local/bin/chromium
+
+# Playwright, and the browser it drives.
+#
+# Both the Node and the Python package are installed, because the skills
+# that drive a browser come in both kinds. The Python one is pinned to
+# the version of the Node one, so both want the same browser build and
+# only one copy of it is downloaded.
+RUN set -eux; \
+    if [ "$ORCA_BOX_BROWSER" = "1" ]; then \
+      npm install -g --ignore-scripts playwright; \
+      root="$(npm root -g)"; \
+      version="$(node -p "require('$root/playwright/package.json').version")"; \
+      pip3 install --break-system-packages "playwright==$version" \
+        || pip3 install --break-system-packages playwright; \
+      playwright install chromium; \
+      python3 -m playwright install chromium; \
+      rm -rf /var/lib/apt/lists/* /root/.cache; \
+    fi
+
 ENV DISABLE_AUTOUPDATER=1
 
 # The node image's "node" user is UID 1000; orca-box maps your host user onto it.

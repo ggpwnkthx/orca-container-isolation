@@ -34,7 +34,7 @@ import {
   rememberEngine,
   spawnProgram,
 } from "./engine.ts";
-import { containerfile } from "../assets/skill-sync.ts";
+import { containerfile, chromiumWrapper } from "../assets/skill-sync.ts";
 import { hostGhCredentials, hostGhState } from "./gh.ts";
 import { configure, runningOrca, userDataDir } from "./orca.ts";
 import { isLinux, isMac, isWindows } from "./platform.ts";
@@ -262,7 +262,7 @@ export async function uninstall(options: SetupOptions): Promise<void> {
 
 /** Install orca-box: the commands, the image and Orca's settings. */
 export async function setup(options: SetupOptions): Promise<void> {
-  const { data, bin, program, containerfile: containerfilePath } = paths();
+  const { data, bin, program, containerfile: containerfilePath, chromium: chromiumPath } = paths();
 
   // --- checks -------------------------------------------------------------
   if (process.getuid?.() === 0) {
@@ -383,6 +383,11 @@ export async function setup(options: SetupOptions): Promise<void> {
     }
   }
   writeFileSync(containerfilePath, containerfile());
+  // The Containerfile copies this into the image: the browser is started
+  // through it, because the box has no capabilities for Chromium's own
+  // sandbox.
+  writeFileSync(chromiumPath, chromiumWrapper());
+  chmodSync(chromiumPath, 0o755);
   rememberEngine();
 
   if (options.gitMode) {

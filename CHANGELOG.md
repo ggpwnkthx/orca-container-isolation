@@ -7,6 +7,26 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- The agent image has a browser in it, so the skills that look at a page
+  work: Chromium from Debian (with the shared libraries it needs -- a
+  browser that was put into an image by hand cannot start, because half
+  of it is missing), Playwright in Node and in Python with the browser
+  it drives, and the fonts a page needs to be readable. The Playwright
+  browsers live outside the home folder, because the boxes share one
+  home volume and it would hide them.
+- The browser is started through a wrapper that turns Chromium's own
+  sandbox off (the boxes drop every capability, so it cannot start; the
+  container is the sandbox here) and gives every run a profile of its
+  own (the boxes share one home folder, and two browsers with one
+  profile refuse to start). The browser tools find it: it is named
+  chromium, so it comes first on the PATH, and IMPECCABLE_BROWSER,
+  CHROME_PATH and PUPPETEER_EXECUTABLE_PATH point at it.
+- ORCA_BOX_SHM_SIZE (1g): the shared memory a box gets. The default 64MB
+  the engines give is too little for a browser.
+- ORCA_BOX_BROWSER (1): set it to 0 to build the image without the
+  browser and Playwright, for the images that do not want them.
+
 ## [1.7.19]
 
 ### Fixed

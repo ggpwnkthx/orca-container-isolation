@@ -192,6 +192,33 @@ Each Orca workspace gets its own container, built from
 
 It cannot see the rest of your home directory, `~/.ssh`, or other repos.
 
+### The browser in the image
+
+The image has a browser in it, because some skills look at the page they
+are working on: they screenshot it, or drive it with a headless browser
+(the impeccable skill's `shot`, the webapp-testing and browser-automation
+skills).
+
+- **Chromium**, from Debian, so the shared libraries it needs come with
+  it. A browser dropped into an image by hand is missing half of itself
+  (`libnspr4.so` and the rest), and cannot start.
+- **Playwright**, in Node and in Python, with the browser it drives. The
+  browsers live in `/opt/ms-playwright`, not in the home folder: the
+  boxes share one home volume, and a browser installed under it would be
+  hidden by that volume.
+- **Fonts**, because a page with no font in it is a page of boxes, and a
+  screenshot of that tells nobody anything.
+- A **wrapper** at `/usr/local/bin/chromium`, which is what the browser
+  tools find (`IMPECCABLE_BROWSER`, `CHROME_PATH` and
+  `PUPPETEER_EXECUTABLE_PATH` point at it too). It turns Chromium's own
+  sandbox off -- the boxes drop every capability, so it cannot start, and
+  the container is the sandbox here -- and gives every run a profile of
+  its own, because the boxes share one home folder.
+
+The browser makes the image about a gigabyte bigger, and the first build
+takes a few minutes longer. Build the image without it by setting
+`ORCA_BOX_BROWSER=0` before the build.
+
 ## What it needs
 
 The host needs very little:
@@ -314,6 +341,8 @@ over the file; the file wins over the defaults.
 | `ORCA_BOX_SKILLS` | `1` | `0` turns off the host-skill mounts |
 | `ORCA_BOX_GH_AUTH` | `0` | `1` gives agents your `gh` credentials |
 | `ORCA_BOX_NO_NEW_PRIVILEGES` | `1` | `0` drops `--security-opt no-new-privileges` (for engines that don't know it) |
+| `ORCA_BOX_SHM_SIZE` | `1g` | shared memory per box; the browser needs more than the 64MB the engines give (empty: the default) |
+| `ORCA_BOX_BROWSER` | `1` | `0` builds the image without the browser and Playwright |
 
 ## Repository layout
 
@@ -341,8 +370,8 @@ src/
     output.ts           say / warn / die
     which.ts            finding programs on PATH
   assets/
-    skill-sync.ts       embeds the Containerfile and the skill-sync script
-container/              the Containerfile and the skill-sync script
+    skill-sync.ts       embeds the Containerfile, the skill-sync script and the browser wrapper
+container/              the Containerfile, the skill-sync script and the browser wrapper
 tests/                  the test suite
 ```
 
@@ -363,9 +392,10 @@ On Windows, build it with Bun directly:
 bun build --compile --target bun-windows-x64 --outfile dist\orca-box-windows-x64.exe src\main.ts
 ```
 
-The build produces a **single self-contained executable**: the Containerfile
-and the skill-sync script are embedded at compile time, so installing it is
-one file in your own space, with nothing else to install alongside it.
+The build produces a **single self-contained executable**: the Containerfile,
+the skill-sync script and the browser wrapper are embedded at compile
+time, so installing it is one file in your own space, with nothing else
+to install alongside it.
 
 `./build.sh --all` builds every released platform, from either Linux or
 macOS: Linux (glibc and musl, x64 and arm64) and macOS (x64 and arm64).

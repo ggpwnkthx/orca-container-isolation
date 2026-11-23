@@ -481,6 +481,9 @@ export function nameOf(id: string): string {
 /** Build the agent image from a folder holding the Containerfile. */
 export function buildImage(dir: string, update = false): void {
   const args = ["build", "-f", join(dir, "Containerfile"), "-t", setting("ORCA_BOX_IMAGE")];
+  // The browser layer is skipped when the setting is 0, for the images
+  // that do not want a browser in them.
+  args.push("--build-arg", `ORCA_BOX_BROWSER=${setting("ORCA_BOX_BROWSER")}`);
   if (update) {
     if (engineBinary() === "podman") args.push("--pull=always", "--no-cache");
     else args.push("--pull", "--no-cache");

@@ -55,7 +55,7 @@ jobs:
           sudo apt-get install -y shellcheck
 
       - name: Lint the shell
-        run: shellcheck -S warning build.sh
+        run: shellcheck -S warning build.sh container/chromium.sh
 
       # Every released platform. The Linux build is one of them, so there
       # is no need to build it twice.

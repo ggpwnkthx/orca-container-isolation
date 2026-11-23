@@ -185,6 +185,36 @@ describe("the agent image", () => {
     expect(text).not.toMatch(/uname -m/);
   });
 
+  test("the image has a browser, and Playwright to drive it", async () => {
+    const { containerfile } = await import("../src/assets/skill-sync.ts");
+    const text = containerfile();
+    // The browser comes from Debian, so the shared libraries it needs
+    // come with it.
+    expect(text).toContain("chromium");
+    expect(text).toContain("fonts-");
+    // Playwright, for the skills that drive a browser.
+    expect(text).toContain("playwright");
+    // The browsers live outside the home folder: the boxes share one
+    // home volume, and it would hide them.
+    expect(text).toContain("PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright");
+    // The browser tools look for these.
+    expect(text).toContain("IMPECCABLE_BROWSER=");
+    expect(text).toContain("CHROME_PATH=");
+    expect(text).toContain("PUPPETEER_EXECUTABLE_PATH=");
+  });
+
+  test("the browser wrapper is embedded", async () => {
+    const { chromiumWrapper } = await import("../src/assets/skill-sync.ts");
+    const script = chromiumWrapper();
+    // The box drops every capability, so Chromium's own sandbox cannot
+    // start: the wrapper turns it off.
+    expect(script).toContain("--no-sandbox");
+    // Every run gets a profile of its own: the boxes share one home.
+    expect(script).toContain("--user-data-dir");
+    // Without a display, the browser takes screenshots.
+    expect(script).toContain("--headless=new");
+  });
+
   test("the skill-sync script lists the skill folders", async () => {
     const { skillSyncScript } = await import("../src/assets/skill-sync.ts");
     const script = skillSyncScript();

@@ -19,6 +19,8 @@ export interface Paths {
   program: string;
   /** Where the agent image's Containerfile goes. */
   containerfile: string;
+  /** Where the browser wrapper for the image goes. */
+  chromium: string;
 }
 
 /** The program's paths, for this machine and this user. */
@@ -30,6 +32,7 @@ export function paths(): Paths {
     bin: join(prefix, "bin"),
     program: programFileIn(data),
     containerfile: join(data, "Containerfile"),
+    chromium: join(data, "chromium.sh"),
   };
 }
 

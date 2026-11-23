@@ -1,17 +1,29 @@
 /**
- * The assets the box needs: the agent image's Containerfile, and the script
- * that links the host's skills into a running box.
+ * The assets the box needs: the agent image's Containerfile, the script
+ * that links the host's skills into a running box, and the wrapper the
+ * browser is started through.
  *
- * Both are embedded at build time, so the shipped binary is self-contained:
- * there is nothing else to install.
+ * All of them are embedded at build time, so the shipped binary is
+ * self-contained: there is nothing else to install.
  */
 
 import containerfileText from "../../container/Containerfile" with { type: "text" };
 import skillSyncText from "../../container/skill-sync.sh" with { type: "text" };
+import chromiumText from "../../container/chromium.sh" with { type: "text" };
 
 /** The Containerfile the agent image is built from. */
 export function containerfile(): string {
   return containerfileText;
+}
+
+/**
+ * The wrapper the browser in the image is started through.
+ *
+ * It is a separate file in the build context, because the Containerfile
+ * copies it into the image.
+ */
+export function chromiumWrapper(): string {
+  return chromiumText;
 }
 
 /**

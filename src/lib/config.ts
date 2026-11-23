@@ -23,6 +23,8 @@ export const SETTINGS_KEYS = [
   "ORCA_BOX_SKILLS",
   "ORCA_BOX_GH_AUTH",
   "ORCA_BOX_NO_NEW_PRIVILEGES",
+  "ORCA_BOX_SHM_SIZE",
+  "ORCA_BOX_BROWSER",
 ] as const;
 
 export type SettingKey = (typeof SETTINGS_KEYS)[number];
@@ -38,6 +40,10 @@ const DEFAULTS: Record<SettingKey, string> = {
   // Engines that don't know the option (some Docker Desktop versions)
   // turn this off; the setup checks.
   ORCA_BOX_NO_NEW_PRIVILEGES: "1",
+  // The browser needs more than the default 64MB of shared memory.
+  ORCA_BOX_SHM_SIZE: "1g",
+  // The image gets a browser (and Playwright) unless this is 0.
+  ORCA_BOX_BROWSER: "1",
 };
 
 const known = new Set<string>(SETTINGS_KEYS);

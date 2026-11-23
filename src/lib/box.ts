@@ -669,6 +669,12 @@ export async function runAgent(args: string[]): Promise<void> {
   const limits =
     memory === "" ? [] : ["--pids-limit", "4096", "--memory", memory];
 
+  // The shared memory of the box: the browser needs more than the 64MB
+  // the engines give by default. ORCA_BOX_SHM_SIZE= (empty) leaves it at
+  // the default.
+  const shm = setting("ORCA_BOX_SHM_SIZE");
+  const shmArgs = shm ? [`--shm-size=${shm}`] : [];
+
   // Remove boxes whose worktree no longer exists (deleted workspaces).
   // Only the labelled ones: the bash version uses the label filter here.
   for (const id of runCaptured(engineBinary(), [
@@ -726,6 +732,7 @@ export async function runAgent(args: string[]): Promise<void> {
     "--cap-drop=all",
     ...securityArgs(),
     ...limits,
+    ...shmArgs,
     "-v",
     `${setting("ORCA_BOX_HOME_VOLUME")}:/home/node`,
     "-e",
@@ -947,6 +954,7 @@ export function archive(all: boolean): void {
 export async function login(args: string[]): Promise<void> {
   prepareHome();
   const gh = ghMounts();
+  const shm = setting("ORCA_BOX_SHM_SIZE");
   const common = [
     engineBinary(),
     "run",
@@ -954,6 +962,7 @@ export async function login(args: string[]): Promise<void> {
     ...userArgs(),
     "--cap-drop=all",
     ...securityArgs(),
+    ...(shm ? [`--shm-size=${shm}`] : []),
     "-v",
     `${setting("ORCA_BOX_HOME_VOLUME")}:/home/node`,
     "-e",
