@@ -7,6 +7,15 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.10]
+
+### Changed
+- The CI no longer copies the test output into the annotations;
+  the job log has it.
+- A release is now made for every version that reaches the main
+  branch: the release workflow makes the tag and attaches the
+  executables and their checksums.
+
 ## [1.7.9]
 
 ### Fixed

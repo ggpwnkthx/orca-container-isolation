@@ -1,14 +1,19 @@
 name: Release
 
-# Tag a version (v1.2.3) to publish a release. The release carries a
-# self-contained executable for each platform, plus its checksums.
+# A release for every version.
 #
-# The executables are what people install: they download the one for their
-# machine and run it. So a tagged release is what they get; the main
-# branch stays the moving target.
+# The release carries a self-contained executable for each platform, plus
+# its checksums. The executables are what people install: they download
+# the one for their machine and run it. So a release is what they get; the
+# main branch stays the moving target.
+#
+# A release is made when a version reaches the main branch: the tag is
+# made here, and the release is made for the version in the VERSION file.
+# A tag that is pushed by hand works too, as long as it is the version.
 on:
   push:
     tags: ['v*']
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -19,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -36,20 +43,40 @@ jobs:
       - name: Build every platform
         run: ./build.sh --all
 
-      - name: Check the version matches the tag
+      - name: Work out the tag
+        id: tag
         run: |
           version="$(cat VERSION)"
-          if [ "${GITHUB_REF_NAME}" != "v$version" ]; then
-            echo "VERSION is $version but the tag is ${GITHUB_REF_NAME}" >&2
-            exit 1
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # A tag that was pushed by hand: it has to be the version.
+            if [ "${GITHUB_REF_NAME}" != "v$version" ]; then
+              echo "VERSION is $version but the tag is ${GITHUB_REF_NAME}" >&2
+              exit 1
+            fi
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="v$version"
           fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "${GITHUB_REF_NAME}" \
+          tag="${{ steps.tag.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "the release $tag is already published" >&2
+            exit 0
+          fi
+          if ! git rev-parse "$tag" >/dev/null 2>&1; then
+            git tag -a "$tag" -m "$tag" "$GITHUB_SHA"
+            # Another run may have made the same tag; that is fine.
+            git push origin "$tag" || echo "the tag is already on the remote" >&2
+          fi
+          # Another run may have published it in the meantime; that is
+          # fine too.
+          gh release create "$tag" \
+            --title "$tag" \
             --generate-notes \
             dist/orca-box-linux-x64 \
             dist/orca-box-linux-arm64 \
@@ -58,4 +85,11 @@ jobs:
             dist/orca-box-darwin-x64 \
             dist/orca-box-darwin-arm64 \
             dist/orca-box-windows-x64.exe \
-            dist/SHA256SUMS
+            dist/SHA256SUMS \
+            || {
+              if gh release view "$tag" >/dev/null 2>&1; then
+                echo "the release $tag is already published" >&2
+                exit 0
+              fi
+              exit 1
+            }
