@@ -7,6 +7,8 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.15]
+
 ### Added
 - The GitHub credentials are a mount, and a mount is decided when the box
   is made. A box now carries a label saying whether it was made with
