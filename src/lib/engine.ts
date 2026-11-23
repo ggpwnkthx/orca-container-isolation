@@ -16,6 +16,17 @@ export type EngineMode = "podman" | "docker" | "docker-rootless";
 
 let mode: EngineMode | null = null;
 
+/**
+ * Can Podman be used on this platform?
+ *
+ * Not on Windows: the boxes mount the worktree at the path Docker Desktop
+ * gives it and map the host user onto a Linux uid, and Podman's machine has
+ * neither. Docker is the engine there.
+ */
+export function podmanSupported(): boolean {
+  return !isWindows();
+}
+
 /** The engine binary: "podman" or "docker". */
 export function engineBinary(): "podman" | "docker" {
   if (mode === null) initEngine();
@@ -53,6 +64,13 @@ function engineHelp(): void {
       );
       return;
     }
+    if (isWindows()) {
+      process.stderr.write(
+        "orca-box: Docker is installed but not usable. Start Docker Desktop\n" +
+          "and wait for it to come up.\n",
+      );
+      return;
+    }
     process.stderr.write(
       "orca-box: Docker is installed but not usable by your user. Start it with\n" +
         "  sudo systemctl enable --now docker\n" +
@@ -68,10 +86,24 @@ function engineHelp(): void {
       );
       return;
     }
+    if (isWindows()) {
+      process.stderr.write(
+        "orca-box: podman is installed, but Podman is not supported on Windows.\n" +
+          "Install Docker Desktop and try again.\n",
+      );
+      return;
+    }
     process.stderr.write(
       "orca-box: podman is installed but 'podman info' fails; run it to see why.\n",
     );
   } else {
+    if (isWindows()) {
+      process.stderr.write(
+        "orca-box: neither Podman nor Docker was found. Install Docker Desktop:\n" +
+          "Podman is not supported on Windows.\n",
+      );
+      return;
+    }
     process.stderr.write(
       isMac()
         ? "orca-box: neither Podman nor Docker was found. Install Docker Desktop,\n" +
@@ -120,6 +152,15 @@ export function initEngine(force = false): EngineMode {
     }
   }
 
+  if (mode === "podman" && !podmanSupported()) {
+    die(
+      "orca-box: Podman is not supported on Windows. The boxes use Docker\n" +
+        "Desktop's path layout and Linux user ids, which Podman's machine does\n" +
+        "not have. Install Docker Desktop and try again, or set\n" +
+        "ORCA_BOX_ENGINE=docker.",
+    );
+  }
+
   const bin = engineBinary();
   if (!hasCommand(bin)) {
     die(
@@ -130,7 +171,10 @@ export function initEngine(force = false): EngineMode {
 }
 
 function detectMode(): EngineMode | null {
-  if (commandWorks("podman", ["info"])) return "podman";
+  // Podman is not supported on Windows: orca-box mounts the worktree at the
+  // path Docker Desktop gives it and maps the host user onto a Linux uid,
+  // and Podman's machine has neither. So only Docker is looked for there.
+  if (podmanSupported() && commandWorks("podman", ["info"])) return "podman";
   if (commandWorks("docker", ["info"])) {
     return dockerIsRootless() ? "docker-rootless" : "docker";
   }

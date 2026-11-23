@@ -15,6 +15,7 @@ import { containerPath, hostPath } from "../src/lib/hostpath.ts";
 import { assetNames } from "../src/lib/app.ts";
 import { windowsAssetNames } from "../src/lib/windowsapp.ts";
 import { isWindows, programAsset, programName } from "../src/lib/platform.ts";
+import { podmanSupported } from "../src/lib/engine.ts";
 import { invokeName } from "../src/lib/invoke.ts";
 
 const realPlatform = process.platform;
@@ -194,5 +195,18 @@ describe("the commands", () => {
     const roaming = process.env.APPDATA ?? "";
     expect(typeof local).toBe("string");
     expect(typeof roaming).toBe("string");
+  });
+
+  test("Podman is not offered on Windows", () => {
+    // The boxes mount the worktree at Docker Desktop's path and map the
+    // host user onto a Linux uid; Podman's machine has neither.
+    pretendWindows();
+    expect(podmanSupported()).toBe(false);
+    // Everywhere else Podman is fine.
+    Object.defineProperty(process, "platform", {
+      value: "linux",
+      configurable: true,
+    });
+    expect(podmanSupported()).toBe(true);
   });
 });
