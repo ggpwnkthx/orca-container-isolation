@@ -7,6 +7,31 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.19]
+
+### Fixed
+- The host's GitHub credentials are found even when gh is not on the
+  PATH. The token was only ever asked of the host's `gh`, and gh was
+  only looked for on the PATH -- but the program is usually started by
+  Orca, a desktop app whose PATH is a short one, and gh is then in
+  /opt/homebrew/bin where Orca cannot see it. So the token was never
+  found, nothing was passed to the boxes, and the agent's gh was not
+  logged in. Updating and making new boxes could not help, because the
+  token was never there to be passed on.
+- The token is looked for where gh looks for it: in the environment, in
+  the gh settings file (where gh writes it in plain text when there is
+  no credential store), and in the credential store -- which the host's
+  gh is asked for, and which the macOS keychain is asked about when
+  there is no gh to ask.
+- The host's gh is found where it is installed, not only on the PATH:
+  Homebrew's folders, ~/.local/bin, the Windows install folders, and
+  GH_PATH, which is the variable gh itself uses to say where it is.
+- The gh host is passed with the token, so that gh in the box asks the
+  host the host's gh was asked about.
+- A box says when no GitHub token could be found on the host, and what
+  to do about it, rather than leaving the agent with an unauthenticated
+  gh to wonder about.
+
 ## [1.7.18]
 
 ### Fixed

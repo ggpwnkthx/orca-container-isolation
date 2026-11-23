@@ -171,11 +171,14 @@ Each Orca workspace gets its own container, built from
 - your host's skills, read-only, added to the box's own
 - the GitHub CLI; with `ORCA_BOX_GH_AUTH=1` it also gets your `gh`
   credentials: your gh settings folder is mounted read-only, and your
-  token is passed in the environment. The token is asked of the host's
-  `gh`, because gh keeps it in the system credential store (the login
-  keychain on macOS, the credential manager on Windows) and falls back to
-  a plain-text file only where there is no credential store, so on macOS
-  and Windows it is in no file to mount. The token is passed to the
+  token is passed in the environment. The token is looked for where gh
+  looks for it: in the environment, in your gh settings file, and in the
+  system credential store (the login keychain on macOS, the credential
+  manager on Windows), where gh keeps it on the platforms that have one
+  and falls back to a plain-text file only where there is none. The
+  host's `gh` is asked for the credential store, and it is looked for
+  beyond the PATH as well, because the program is usually started by
+  Orca, whose own PATH is a short one. The token is passed to the
   engine by name, so it is not in the command line, where every process
   on the machine could read it; a GitHub Enterprise host also gets it as
   `GITHUB_ENTERPRISE_TOKEN`, which is the name gh looks for there. Both

@@ -35,7 +35,7 @@ import {
   spawnProgram,
 } from "./engine.ts";
 import { containerfile } from "../assets/skill-sync.ts";
-import { hostGhState, hostGhToken } from "./gh.ts";
+import { hostGhCredentials, hostGhState } from "./gh.ts";
 import { configure, runningOrca, userDataDir } from "./orca.ts";
 import { isLinux, isMac, isWindows } from "./platform.ts";
 import { removeAutoUpdate } from "./update.ts";
@@ -400,12 +400,15 @@ export async function setup(options: SetupOptions): Promise<void> {
     );
     // Say what there is to share, so an empty share is not a mystery.
     const host = hostGhState();
-    const token = hostGhToken();
-    if (token) {
-      plain("    Sharing your gh token: it is passed in the environment, and your");
-      plain(`    gh settings (${host.dir}) are mounted read-only.`);
+    const creds = hostGhCredentials();
+    if (creds.token) {
+      plain(`    Sharing your gh token (from ${creds.source}): it is passed in the`);
+      plain("    environment, and your gh settings are mounted read-only.");
     } else if (host.hasConfig) {
       plain(`    Sharing ${join(host.dir, "hosts.yml")}.`);
+      if (creds.reason) {
+        plain(`    ${creds.reason}, so no token is passed to the boxes.`);
+      }
     } else {
       plain("    There are no gh credentials on this host yet: there is no");
       plain(`    ${join(host.dir, "hosts.yml")} and no GH_TOKEN in the environment.`);

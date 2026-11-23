@@ -16,7 +16,8 @@ import { sha512FromYml } from "../src/lib/appimage.ts";
 import { assetNames } from "../src/lib/app.ts";
 import { releaseInfo } from "../src/lib/release.ts";
 import { invokeName, invokeNameFrom, psCmdlineName } from "../src/lib/invoke.ts";
-import { hasCommand } from "../src/lib/which.ts";
+import { hasCommand, findCommand } from "../src/lib/which.ts";
+import { findGh, ghSettingsHosts } from "../src/lib/gh.ts";
 import { hasSubidRange } from "../src/lib/setup.ts";
 import { BoxLock } from "../src/lib/box.ts";
 import { macAssetNames } from "../src/lib/macapp.ts";
@@ -32,6 +33,15 @@ let work: string;
 let home: string;
 let repo: string;
 let bin: string;
+/**
+ * A PATH with the engine and git in it, and no gh.
+ *
+ * A desktop app -- Orca -- starts the program with a PATH of its own,
+ * which is a short one: gh, which most people install somewhere else,
+ * is not on it. The folder is what the program is given to find things
+ * in, and gh is deliberately not in it.
+ */
+let noGhBin: string;
 
 beforeAll(() => {
   work = mkdtempSync(join(tmpdir(), "orca-box-test-"));
@@ -44,6 +54,13 @@ beforeAll(() => {
   buildMock("podman", join(bin, mockName("podman")));
   buildMock("curl", join(bin, mockName("curl")));
   buildMock("gh", join(bin, mockName("gh")));
+  // The same engine, in a folder without gh in it.
+  noGhBin = join(work, "bin-no-gh");
+  mkdirSync(noGhBin, { recursive: true });
+  copyFileSync(join(bin, mockName("podman")), join(noGhBin, mockName("podman")));
+  chmodSync(join(noGhBin, mockName("podman")), 0o755);
+  const git = findCommand("git");
+  if (git) symlinkSync(git, join(noGhBin, "git"));
   mkdirSync(join(home, ".agents", "skills", "demo"), { recursive: true });
   mkdirSync(join(home, ".claude", "skills"), { recursive: true });
   mkdirSync(join(home, ".config", "gh"), { recursive: true });
@@ -286,13 +303,16 @@ function ghDir(): string {
 /**
  * Put a hosts.yml in the test home, and return the way to take it away.
  *
- * The file is what says the host's gh has credentials to share.
+ * The file is what says the host's gh has credentials to share. The
+ * token is only in the file where gh has no credential store to keep it
+ * in, which is Linux; elsewhere it is asked of gh.
  */
-function writeHosts(host: string): () => void {
+function writeHosts(host: string, token = ""): () => void {
   const dir = ghDir();
   mkdirSync(dir, { recursive: true });
   const file = join(dir, "hosts.yml");
-  writeFileSync(file, `${host}:\n    user: test\n    git_protocol: ssh\n`);
+  const oauth = token ? `    oauth_token: ${token}\n` : "";
+  writeFileSync(file, `${host}:\n    user: test\n${oauth}    git_protocol: ssh\n`);
   return () => rmSync(file, { force: true });
 }
 
@@ -489,6 +509,65 @@ describe("running a box", () => {
     }
   });
 
+  test("the token is captured with gh auth token, on the host", () => {
+    // The token is in the system credential store on macOS and Windows,
+    // and only the host's gh can read it: so the host's gh is asked, and
+    // it is asked for the token of the host it is logged in to.
+    const result = run(["orca-box", "claude"], {
+      FAKE_EXISTING: "0",
+      ORCA_BOX_GH_AUTH: "1",
+    });
+    expect(result.log).toContain("GH auth token --hostname github.com");
+    expect(result.envLog).toContain("GH_TOKEN=gho_testtoken");
+  });
+
+  test("the token is found without gh on the PATH", () => {
+    // The program is usually started by a desktop app, whose PATH is a
+    // short one, so gh is not on it: the token in the gh settings file
+    // is used instead of asking gh.
+    const hosts = writeHosts("github.com", "gho_fromthefile");
+    try {
+      const result = run(["orca-box", "claude"], {
+        FAKE_EXISTING: "0",
+        ORCA_BOX_GH_AUTH: "1",
+        PATH: noGhBin,
+      });
+      expect(result.envLog).toContain("GH_TOKEN=gho_fromthefile");
+      expect(result.envLog).toContain("GH_HOST=github.com");
+    } finally {
+      hosts();
+    }
+  });
+
+  test("the host of the token in the settings file is passed on", () => {
+    // An enterprise host: gh ignores GH_TOKEN there, so the token goes
+    // under the name gh looks for.
+    const hosts = writeHosts("ghe.example.com", "gho_fromthefile");
+    try {
+      const result = run(["orca-box", "claude"], {
+        FAKE_EXISTING: "0",
+        ORCA_BOX_GH_AUTH: "1",
+        PATH: noGhBin,
+      });
+      expect(result.envLog).toContain("GITHUB_ENTERPRISE_TOKEN=gho_fromthefile");
+      expect(result.envLog).toContain("GH_HOST=ghe.example.com");
+    } finally {
+      hosts();
+    }
+  });
+
+  test("the box says when no token could be found", () => {
+    // The host is not logged in, and there is no token to be had: say so,
+    // rather than let the agent find an unauthenticated gh.
+    const result = run(["orca-box", "claude"], {
+      FAKE_EXISTING: "0",
+      ORCA_BOX_GH_AUTH: "1",
+      FAKE_GH_TOKEN: "",
+    });
+    expect(result.output).toContain("no GitHub token found");
+    expect(result.output).toContain("orca-box-login");
+  });
+
   test("a box made without the gh credentials says so", () => {
     // The credentials are a mount, so a box that is already running keeps
     // the mounts it was made with: say so, rather than let the agent
@@ -506,6 +585,55 @@ describe("running a box", () => {
     const { output, code } = run(["orca-box", "claude"], { ORCA_BOX_GIT: "maybe" });
     expect(output).toContain("ORCA_BOX_GIT must be ro or rw");
     expect(code).toBe(2);
+  });
+});
+
+describe("the host's gh settings", () => {
+  test("the hosts and their tokens are read from the settings file", () => {
+    const dir = join(work, "ghsettings");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "hosts.yml"),
+      [
+        "# the hosts this gh knows",
+        "github.com:",
+        "    user: test",
+        "    oauth_token: gho_plain",
+        "    git_protocol: https",
+        "ghe.example.com:",
+        "    user: other",
+        "    users:",
+        "        someone:",
+        "            oauth_token: ghe_plain",
+        "",
+      ].join("\n"),
+    );
+    const before = process.env.GH_CONFIG_DIR;
+    process.env.GH_CONFIG_DIR = dir;
+    try {
+      const hosts = ghSettingsHosts();
+      expect(hosts.map((h) => h.host)).toEqual(["github.com", "ghe.example.com"]);
+      expect(hosts[0]?.token).toBe("gho_plain");
+      expect(hosts[1]?.token).toBe("ghe_plain");
+    } finally {
+      if (before === undefined) delete process.env.GH_CONFIG_DIR;
+      else process.env.GH_CONFIG_DIR = before;
+    }
+  });
+
+  test("gh is found where it is installed, not only on the PATH", () => {
+    // GH_PATH is the variable gh itself uses to say where it is.
+    const fake = join(work, "gh-in-a-folder");
+    writeFileSync(fake, "#!/bin/sh\nexit 0\n");
+    chmodSync(fake, 0o755);
+    const before = process.env.GH_PATH;
+    process.env.GH_PATH = fake;
+    try {
+      expect(findGh()).toBe(fake);
+    } finally {
+      if (before === undefined) delete process.env.GH_PATH;
+      else process.env.GH_PATH = before;
+    }
   });
 });
 

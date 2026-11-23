@@ -40,8 +40,13 @@ export function findCommand(name: string): string {
   return "";
 }
 
-/** Is this path a file we can run? */
-function isExecutable(path: string): boolean {
+/**
+ * Is this path a file we can run?
+ *
+ * Exported, so that a program that is not on the PATH can still be found
+ * in the place it is usually installed in.
+ */
+export function isExecutable(path: string): boolean {
   try {
     if (!existsSync(path)) return false;
     if (!statSync(path).isFile()) return false;

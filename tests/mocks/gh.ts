@@ -9,9 +9,22 @@
  *   FAKE_GH_TOKEN   the token to answer with; empty means "not logged in"
  *   FAKE_GH_HOST    the host it is logged in to. When it is not set, the
  *                   token is given for any host that is asked for.
+ *   FAKE_LOG        file to append what was asked to, so a test can see
+ *                   that the host's gh was the one that answered
  */
 
+import { appendFileSync } from "node:fs";
+
 const args = process.argv.slice(2);
+
+const log = process.env.FAKE_LOG;
+if (log) {
+  try {
+    appendFileSync(log, `GH ${args.join(" ")}\n`);
+  } catch {
+    // The log is for the tests to read; the answer still has to be given.
+  }
+}
 
 if (args[0] === "auth" && args[1] === "token") {
   // An empty FAKE_GH_TOKEN means "not logged in", the way gh answers when

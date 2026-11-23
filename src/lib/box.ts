@@ -24,7 +24,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { createHash } from "node:crypto";
 import { setting } from "./config.ts";
-import { defaultGhDir, hostGhCredentials } from "./gh.ts";
+import { defaultGhDir, hostGhCredentials, type GhCredentials } from "./gh.ts";
 import {
   boxIds,
   engineBinary,
@@ -200,12 +200,19 @@ export function ghMounts(): {
   mounts: string[];
   env: string[];
   vars: Record<string, string>;
+  creds: GhCredentials;
 } {
   const mounts: string[] = [];
   const env: string[] = [];
   // The values the engine passes on to the container.
   const vars: Record<string, string> = {};
-  if (setting("ORCA_BOX_GH_AUTH") !== "1") return { mounts, env, vars };
+  const creds: GhCredentials = {
+    host: "",
+    token: "",
+    source: "",
+    reason: "",
+  };
+  if (setting("ORCA_BOX_GH_AUTH") !== "1") return { mounts, env, vars, creds };
 
   const ghDir = process.env.GH_CONFIG_DIR ?? defaultGhDir();
   // The folder is mounted only when there are credentials in it to
@@ -216,25 +223,30 @@ export function ghMounts(): {
   }
 
   // The token, and the host it belongs to.
-  const { host, token } = hostGhCredentials();
-  if (token) {
-    vars.GH_TOKEN = token;
+  const found = hostGhCredentials();
+  creds.host = found.host;
+  creds.token = found.token;
+  creds.source = found.source;
+  creds.reason = found.reason;
+  if (found.token) {
+    vars.GH_TOKEN = found.token;
     env.push("-e", "GH_TOKEN");
-    if (host && host !== "github.com") {
+    if (found.host && found.host !== "github.com") {
       // gh looks for the token of an enterprise host under its own name,
       // and ignores GH_TOKEN there.
-      vars.GITHUB_ENTERPRISE_TOKEN = token;
+      vars.GITHUB_ENTERPRISE_TOKEN = found.token;
       env.push("-e", "GITHUB_ENTERPRISE_TOKEN");
     }
-  }
-  if (host) {
-    vars.GH_HOST = host;
+    // The host the token belongs to, so that gh in the box asks the same
+    // one. It goes with the token: without a token, the box's own gh
+    // decides for itself.
+    vars.GH_HOST = found.host;
     env.push("-e", "GH_HOST");
   }
   // A token in the environment under the other name, for the tools that
   // look for that one.
   if (process.env.GITHUB_TOKEN) env.push("-e", "GITHUB_TOKEN");
-  return { mounts, env, vars };
+  return { mounts, env, vars, creds };
 }
 
 /** The .git mounts for the box, and the git environment that goes with them. */
@@ -694,6 +706,18 @@ export async function runAgent(args: string[]): Promise<void> {
   // the box, so a later launch can tell that the running box was made
   // without them (or with them, when they are no longer wanted).
   const wantGh = setting("ORCA_BOX_GH_AUTH") === "1" ? "1" : "0";
+
+  // The credentials are wanted, but none could be found on this host: say
+  // so, rather than let the agent find an unauthenticated gh and wonder
+  // why.
+  if (wantGh === "1" && !gh.creds.token && gh.creds.reason) {
+    warn(
+      "no GitHub token found on this host, so this box gets no gh credentials.\n" +
+        `    ${gh.creds.reason}.\n` +
+        "    Set GH_TOKEN in the environment Orca starts the agents with, or sign\n" +
+        "    in inside a box with orca-box-login.",
+    );
+  }
 
   // Options every box gets: the agent's user, no capabilities, and the
   // shared home volume.
