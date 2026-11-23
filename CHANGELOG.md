@@ -14,6 +14,13 @@ and this project uses [semantic versioning](https://semver.org/).
   says how to start a new box.
 
 ### Changed
+- The gh token is asked of the host's gh and passed in the environment.
+  gh keeps the token in the system credential store -- the keychain on
+  macOS, the credential manager on Windows -- and falls back to a plain
+  text file only where there is no credential store, so on macOS and
+  Windows it was in no file to mount: the mounted folder carried the
+  settings and not the token, and the agent found an unauthenticated gh.
+  The token is passed by name, so it is not in the command line.
 - The setup says what there is to share when `--gh-auth` is used: the
   host's credentials, a token in the environment, or nothing yet, and
   what to do about it.

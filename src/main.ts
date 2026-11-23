@@ -59,8 +59,12 @@ What the container can see:
     (live: a skill you install later shows up in the running box;
     ORCA_BOX_SKILLS=0 to turn off)
   - the GitHub CLI (gh). With ORCA_BOX_GH_AUTH=1 it also gets your gh
-    credentials, read-only: agents can then use your gh login. Whoever runs
-    in the box can read that token, so only turn this on when you want that.
+    credentials: your gh settings folder is mounted read-only, and your
+    token is passed in the environment. The token is asked of the host's
+    gh, because gh keeps it in the system credential store (the keychain
+    on macOS, the credential manager on Windows), not in a file. Whoever
+    runs in the box can read that token, so only turn this on when you
+    want that.
 It cannot see the rest of your home directory, ~/.ssh, or other repos.
 Run outside a repo (from ~, a ~/.dotdir or outside ~), it gets a throwaway
 box with no host files at all; from another folder under ~, just that folder.

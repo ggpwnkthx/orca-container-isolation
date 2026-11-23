@@ -24,7 +24,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { createHash } from "node:crypto";
 import { setting } from "./config.ts";
-import { defaultGhDir } from "./gh.ts";
+import { defaultGhDir, hostGhHost, hostGhToken } from "./gh.ts";
 import {
   boxIds,
   engineBinary,
@@ -184,6 +184,14 @@ export function skillMounts(): { mounts: string[]; sync: string } {
  * The config folder is mounted read-only: an agent cannot add or change
  * credentials, but it can read the token in there, so this hands your
  * GitHub token to everyone who runs in the box.
+ *
+ * The token is also passed in the environment, because the folder is not
+ * always where the token is: gh keeps it in the system credential store
+ * (the keychain on macOS, the credential manager on Windows), so on those
+ * platforms the mounted folder alone would leave the agent with a gh that
+ * is not logged in. It is passed by name, not by value, so the token is
+ * not in the command line, where every process on the machine could read
+ * it.
  */
 export function ghMounts(): { mounts: string[]; env: string[] } {
   const mounts: string[] = [];
@@ -194,11 +202,21 @@ export function ghMounts(): { mounts: string[]; env: string[] } {
   if (existsSync(ghDir)) {
     mounts.push("-v", `${ghDir}:/home/node/.config/gh${mountOpt("ro")}`);
   }
-  // A token in the environment instead of in gh's config folder.
-  for (const name of ["GH_TOKEN", "GITHUB_TOKEN"]) {
-    const value = process.env[name];
-    if (value) env.push("-e", name);
+
+  // The token, and the host it belongs to.
+  const token = hostGhToken();
+  if (token) {
+    process.env.GH_TOKEN = token;
+    env.push("-e", "GH_TOKEN");
   }
+  const host = hostGhHost();
+  if (host) {
+    process.env.GH_HOST = host;
+    env.push("-e", "GH_HOST");
+  }
+  // A token in the environment under the other name, for the tools that
+  // look for that one.
+  if (process.env.GITHUB_TOKEN) env.push("-e", "GITHUB_TOKEN");
   return { mounts, env };
 }
 

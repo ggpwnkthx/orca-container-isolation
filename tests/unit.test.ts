@@ -43,6 +43,7 @@ beforeAll(() => {
   // on every platform: a .cmd file cannot be started without a shell.
   buildMock("podman", join(bin, mockName("podman")));
   buildMock("curl", join(bin, mockName("curl")));
+  buildMock("gh", join(bin, mockName("gh")));
   mkdirSync(join(home, ".agents", "skills", "demo"), { recursive: true });
   mkdirSync(join(home, ".claude", "skills"), { recursive: true });
   mkdirSync(join(home, ".config", "gh"), { recursive: true });
@@ -387,6 +388,46 @@ describe("running a box", () => {
       ORCA_BOX_GH_AUTH: "1",
     });
     expect(with_.log).toContain("orca.gh=1");
+  });
+
+  test("the gh token is passed in the environment, not on the command line", () => {
+    // On macOS and Windows gh keeps the token in the system credential
+    // store, so it is not in the file that is mounted: it has to be
+    // passed another way.
+    const result = run(["orca-box", "claude"], {
+      FAKE_EXISTING: "0",
+      ORCA_BOX_GH_AUTH: "1",
+    });
+    expect(result.log).toContain("-e GH_TOKEN");
+    // The token is passed by name, so it is not in the command line,
+    // where every process on the machine could read it.
+    expect(result.log).not.toContain("gho_testtoken");
+  });
+
+  test("no token is passed when the host is not logged in", () => {
+    const result = run(["orca-box", "claude"], {
+      FAKE_EXISTING: "0",
+      ORCA_BOX_GH_AUTH: "1",
+      FAKE_GH_TOKEN: "",
+    });
+    expect(result.log).not.toContain("-e GH_TOKEN");
+  });
+
+  test("the gh host is passed with the token", () => {
+    // A GitHub Enterprise host: gh has to be told which one to use.
+    writeFileSync(
+      join(home, ".config", "gh", "hosts.yml"),
+      "ghe.example.com:\n    user: test\n    git_protocol: ssh\n",
+    );
+    try {
+      const result = run(["orca-box", "claude"], {
+        FAKE_EXISTING: "0",
+        ORCA_BOX_GH_AUTH: "1",
+      });
+      expect(result.log).toContain("-e GH_HOST");
+    } finally {
+      rmSync(join(home, ".config", "gh", "hosts.yml"), { force: true });
+    }
   });
 
   test("a box made without the gh credentials says so", () => {

@@ -170,14 +170,19 @@ Each Orca workspace gets its own container, built from
 - a named volume used as `$HOME`, shared by all boxes (so logins are shared)
 - your host's skills, read-only, added to the box's own
 - the GitHub CLI; with `ORCA_BOX_GH_AUTH=1` it also gets your `gh`
-  credentials, read-only. Those are a mount, and a mount is decided when
-  the box is made: a box that is already running keeps the mounts it was
-  made with, so run `orca-box-archive` after turning the setting on or
-  off. Signing in inside a box works too (`orca-box-login`, then `gh auth
-  login`): the boxes share one home, so that login is shared by all of
-  them. On Docker Desktop, use VirtioFS file sharing: with the older
-  gRPC-FUSE sharing the credential file belongs to root in the container,
-  and the agent cannot read it.
+  credentials: your gh settings folder is mounted read-only, and your
+  token is passed in the environment. The token is asked of the host's
+  `gh`, because gh keeps it in the system credential store (the login
+  keychain on macOS, the credential manager on Windows) and falls back to
+  a plain-text file only where there is no credential store, so on macOS
+  and Windows it is in no file to mount. Both are decided when the box is
+  made: a box that is already running keeps the mounts it was made with,
+  so run `orca-box-archive` after turning the setting on or off. Signing
+  in inside a box works too (`orca-box-login`, then `gh auth login`): the
+  boxes share one home, so that login is shared by all of them. On Docker
+  Desktop, use VirtioFS file sharing: with the older gRPC-FUSE sharing
+  the credential file belongs to root in the container, and the agent
+  cannot read it.
 
 It cannot see the rest of your home directory, `~/.ssh`, or other repos.
 
