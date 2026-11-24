@@ -39,7 +39,7 @@ import { hostGhCredentials, hostGhState } from "./gh.ts";
 import { configure, runningOrca, userDataDir } from "./orca.ts";
 import { isLinux, isMac, isWindows } from "./platform.ts";
 import { removeAutoUpdate } from "./update.ts";
-import { paths } from "./paths.ts";
+import { paths, type Paths } from "./paths.ts";
 import { die, plain, say, warn } from "./output.ts";
 import { findCommand, hasCommand, runIfPresent } from "./which.ts";
 
@@ -386,32 +386,20 @@ export async function setup(options: SetupOptions): Promise<void> {
 
   // --- 3. orca-box --------------------------------------------------------
   say(`Installing orca-box to ${program}, commands in ${bin}`);
-  mkdirSync(bin, { recursive: true });
-  mkdirSync(data, { recursive: true });
   mkdirSync(CONFIG_FILE_DIR, { recursive: true });
 
-  // One copy of the program; every command is a link to it.
-  installProgram(program);
-
-  for (const tool of TOOLS) {
-    const link = join(bin, tool);
-    try {
-      unlinkSync(link);
-    } catch {
-      // Not there.
-    }
-    if (isWindows()) {
-      writeWindowsShim(link, program, tool);
-    } else {
-      symlinkSync(program, link);
-    }
-  }
-  writeFileSync(containerfilePath, containerfile());
-  // The Containerfile copies this into the image: the browser is started
-  // through it, because the box has no capabilities for Chromium's own
-  // sandbox.
-  writeFileSync(chromiumPath, chromiumWrapper());
-  chmodSync(chromiumPath, 0o755);
+  // One copy of the program, the commands that start it, and the two
+  // files the box needs.
+  installFiles(
+    {
+      data,
+      bin,
+      program,
+      containerfile: containerfilePath,
+      chromium: chromiumPath,
+    },
+    currentProgram(),
+  );
   rememberEngine();
 
   if (options.gitMode) {
@@ -550,6 +538,58 @@ function addToUserPath(dir: string): boolean {
 }
 
 /**
+ * Put the program's own files in place: the program itself, the commands
+ * that start it, and the two files the box needs.
+ *
+ * Split out of the setup so that it can be checked on its own: the tests
+ * install into a folder of their own and look at what is there.
+ */
+export function installFiles(target: Paths, source: string): void {
+  mkdirSync(target.bin, { recursive: true });
+  mkdirSync(target.data, { recursive: true });
+  // One copy of the program; every command is a link to it.
+  installProgramFile(source, target.program);
+  installCommands(target.bin, target.program);
+  writeFileSync(target.containerfile, containerfile());
+  // The Containerfile copies this into the image: the browser is started
+  // through it, because the box has no capabilities for Chromium's own
+  // sandbox.
+  writeFileSync(target.chromium, chromiumWrapper());
+  chmodSync(target.chromium, 0o755);
+}
+
+/**
+ * Write the commands that start the program.
+ *
+ * On Linux and macOS they are links to the program. On Windows they are
+ * .cmd files, because Windows cannot start a program through a link, and
+ * a .cmd file cannot be started without a shell. The .cmd is the name
+ * cmd.exe and PowerShell look for, so a command started by name is
+ * found.
+ */
+export function installCommands(bin: string, program: string): void {
+  for (const tool of TOOLS) {
+    // An older version wrote the Windows commands without the .cmd
+    // extension, and cmd.exe cannot start those: they are taken away.
+    removeIfThere(join(bin, tool));
+    if (isWindows()) {
+      writeWindowsShim(join(bin, `${tool}.cmd`), program, tool);
+    } else {
+      symlinkSync(program, join(bin, tool));
+    }
+  }
+}
+
+/** Take a file away, if it is there. */
+function removeIfThere(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // Not there.
+  }
+}
+
+/**
  * Write a command for Windows.
  *
  * Windows cannot run a program through a link without extra privileges,
@@ -615,21 +655,20 @@ export function startApp(app: string): void {
   });
 }
 
+/** What to say when there is no program to install. */
+const NO_PROGRAM =
+  "this is a source checkout, not a program that can be installed.\n" +
+  "    Run ./build.sh and install the program it writes to dist/, or\n" +
+  "    download the release for your platform.";
+
 /**
- * Put the program in place.
+ * Put a program file in place.
  *
- * When the program is running from a file, that file is the program. When
- * it is running from a compiled binary, the binary is copied.
+ * The copy is made beside the destination and moved into place, so that
+ * a program which is running is replaced rather than refused.
  */
-export function installProgram(dest: string): void {
-  const source = currentProgram();
-  if (!source) {
-    die(
-      "this is a source checkout, not a program that can be installed.\n" +
-        "    Run ./build.sh and install the program it writes to dist/, or\n" +
-        "    download the release for your platform.",
-    );
-  }
+export function installProgramFile(source: string, dest: string): void {
+  if (!source) die(NO_PROGRAM);
   if (source === dest) return;
   const tmp = `${dest}.${process.pid}.tmp`;
   copyFileSync(source, tmp);
