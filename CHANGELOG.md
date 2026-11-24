@@ -7,6 +7,16 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.22]
+
+### Fixed
+- The Windows commands are `.cmd` files again. They were written into
+  `%LOCALAPPDATA%\orca-box\bin` under their bare names, and neither
+  cmd.exe nor PowerShell can start a file without an extension, so
+  `orca-box-update` was not found when it was typed by name. The
+  installer writes `orca-box-update.cmd` and the rest now, and takes the
+  old files away.
+
 ## [1.7.21]
 
 ### Fixed
