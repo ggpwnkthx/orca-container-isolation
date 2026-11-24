@@ -24,6 +24,11 @@ const state: Record<string, string> = {
   pi: "",
 };
 
+// The permission mode of each agent. Orca has no permission mode for pi:
+// asking for one is refused, the way the real app refuses it.
+const modes: Record<string, string> = {};
+const WITHOUT_PERMISSION_MODE = ["pi"];
+
 const [userData, socketPath] = process.argv.slice(2);
 if (!userData || !socketPath) {
   process.stderr.write("usage: orca-daemon.ts <user-data-dir> <socket-path>\n");
@@ -58,12 +63,36 @@ const server = createServer((socket) => {
           reply = {
             id: message.id,
             ok: true,
-            result: { settings: { agentCmdOverrides: { ...state } } },
+            result: {
+              settings: {
+                agentCmdOverrides: { ...state },
+                permissionMode: Object.values(modes)[0] ?? "manual",
+              },
+            },
           };
           break;
         case "settings.mutateAgentLaunch": {
-          const params = (message.params ?? {}) as { agent?: string; value?: string };
-          if (params.agent) state[params.agent] = params.value ?? "";
+          const params = (message.params ?? {}) as {
+            agent?: string;
+            value?: string;
+            type?: string;
+            mode?: string;
+          };
+          const agent = params.agent ?? "";
+          if (params.type === "permissions") {
+            if (WITHOUT_PERMISSION_MODE.includes(agent)) {
+              reply = {
+                id: message.id,
+                ok: false,
+                error: { message: "This agent has no configurable terminal permission mode" },
+              };
+              break;
+            }
+            modes[agent] = params.mode ?? "";
+            reply = { id: message.id, ok: true, result: {} };
+            break;
+          }
+          if (agent) state[agent] = params.value ?? "";
           reply = { id: message.id, ok: true, result: {} };
           break;
         }

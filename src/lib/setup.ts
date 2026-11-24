@@ -143,6 +143,9 @@ function podmanBinary(): string {
  * without a shell. With a custom PREFIX, Orca can't find the bare name,
  * so use the full path.
  *
+ * A path with a space in it is quoted, because Orca runs the command
+ * through a shell: without the quotes, the shell would see two words.
+ *
  * On Windows a .cmd file cannot be started without a shell, so the
  * program itself is named.
  */
@@ -151,9 +154,26 @@ export function orcaCommandPrefix(): string {
   if (isWindows()) return program;
   const localBin = join(homedir(), ".local", "bin");
   if (bin !== localBin) {
-    return join(bin, "orca-box");
+    return quoteCommandPath(join(bin, "orca-box"));
   }
   return "orca-box";
+}
+
+/**
+ * A path as it can be written in a command: quoted when it has a space
+ * in it, so that the shell reads it as one word.
+ *
+ * The quotes are the shell's own (single quotes on Unix), and Orca
+ * takes them off again when it reads the command back.
+ */
+export function quoteCommandPath(path: string): string {
+  if (!/\s/.test(path)) return path;
+  if (path.includes("'")) {
+    // A single quote inside the path: close the quotes, escape it, and
+    // open them again.
+    return `'${path.replace(/'/g, `'\\''`)}'`;
+  }
+  return `'${path}'`;
 }
 
 /** Point Orca's agents at orca-box. */
@@ -171,7 +191,9 @@ async function configureOrca(yolo: boolean): Promise<boolean> {
       prefix,
     });
   } catch (err) {
-    warn(`couldn't reach Orca: ${(err as Error).message}`);
+    // The reason Orca gave, not a guess: it may have refused the
+    // change, or the socket may be gone.
+    warn(`Orca's settings weren't changed: ${(err as Error).message}`);
     return false;
   }
 }
@@ -189,7 +211,9 @@ export async function uninstall(options: SetupOptions): Promise<void> {
         yolo: false,
         boxPath: paths().program,
         savedPath: join(CONFIG_FILE_DIR, "orca-previous-commands.json"),
-        prefix: "orca-box",
+        // The command we would have set: the one that is ours, and the
+        // one that has to be put back.
+        prefix: orcaCommandPrefix(),
       });
     } catch {
       warn(

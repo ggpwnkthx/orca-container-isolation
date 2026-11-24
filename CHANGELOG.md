@@ -7,6 +7,28 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.21]
+
+### Fixed
+- The Orca settings are set on every platform. On Windows the program
+  was installed one folder too deep
+  (`%LOCALAPPDATA%\orca-box\orca-box\orca-box.exe` instead of
+  `%LOCALAPPDATA%\orca-box\orca-box.exe`), so the command Orca was told
+  to run pointed at a folder that is not the one the README (and the
+  commands beside it) say.
+- `--yolo` no longer stops at the first agent Orca refuses it for.
+  Orca has no permission mode for pi, and refused the change; that
+  ended the whole setting, so the other agents were left half done and
+  the reason was reported as "couldn't reach Orca". The refusal is now
+  said, per agent, and the rest of the settings are still made.
+- A command with a path that has a space in it is quoted, so that the
+  shell reads it as one word -- and the quoted path is recognized as
+  ours again, so `--unset` and a second setup put back what was there
+  before instead of losing it.
+- The command is compared with the one that was set the way the
+  platform compares paths: on Windows a path is the same path whatever
+  its case, so `C:\Users\Me` and `c:\users\me` are the same program.
+
 ## [1.7.20]
 
 ### Added

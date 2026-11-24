@@ -73,13 +73,20 @@ export function configHome(): string {
   return join(homedir(), ".config");
 }
 
-/** Where the program's own data lives. */
+/**
+ * Where the program's own data lives.
+ *
+ * This is the base folder: the program's own folder is in it, under the
+ * name orca-box (see paths.ts), the same way the commands are.
+ */
 export function dataHome(): string {
   const fromEnv = process.env.XDG_DATA_HOME;
   if (fromEnv) return fromEnv;
   if (isWindows()) {
-    const local = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
-    return join(local, "orca-box");
+    // The local application data folder: %LOCALAPPDATA%. The program
+    // itself is %LOCALAPPDATA%\orca-box\orca-box.exe, beside the folder
+    // with the commands (%LOCALAPPDATA%\orca-box\bin).
+    return process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
   }
   return join(homedir(), ".local", "share");
 }

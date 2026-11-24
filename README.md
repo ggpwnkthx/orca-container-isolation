@@ -124,7 +124,7 @@ setup adds that folder to your PATH for you.
 | Option | What it does |
 | --- | --- |
 | `--git=rw` | let agents stage and commit (default: read-only `.git`) |
-| `--yolo` | set the agents to Yolo permissions (the container is the boundary) |
+| `--yolo` | set the agents to Yolo permissions (the container is the boundary). Orca has no Yolo mode for every agent: pi has none, and for it the permission is left as it was |
 | `--gh-auth` | give agents your GitHub credentials, read-only (boxes that are already running need `orca-box-archive`) |
 | `--no-orca-app` | don't download or update the Orca app |
 
@@ -142,7 +142,7 @@ setup adds that folder to your PATH for you.
 | `~/.local/share/applications/` | the Orca menu entry (Linux) |
 | `~/.config/systemd/user/` | the daily update timer, if you enable it (Linux) |
 | `~/Library/LaunchAgents/` | the daily update agent, if you enable it (macOS) |
-| `%LOCALAPPDATA%\orca-box\` | the program and its data (Windows) |
+| `%LOCALAPPDATA%\orca-box\` | the program (`orca-box.exe`) and its data (Windows) |
 | `%LOCALAPPDATA%\orca-box\bin\` | the `orca-box` commands (Windows) |
 | `%APPDATA%\orca-box\` | the settings (Windows) |
 
@@ -157,6 +157,22 @@ Each command acts on the name it is called by:
 | `orca-box-install-orca` | install/update the Orca app + menu entry |
 | `orca-box-update` | update `orca-box` from the latest release |
 | `orca-box-setup` | the installer itself |
+
+### The command Orca runs
+
+`orca-box-setup` points Orca's own Claude Code, Codex and pi agents at
+orca-box, the same setting as Settings → Agents → <agent> → Command. The
+command is a little different on each platform:
+
+| Platform | The command |
+| --- | --- |
+| Linux, macOS | `orca-box claude` (the bare name: Orca finds `~/.local/bin` on its own PATH) |
+| Windows | the full path of `orca-box.exe` (a `.cmd` file cannot be started without a shell, and Orca's background jobs start the program itself) |
+
+A path with a space in it is quoted, so that the shell reads it as one
+word. With `--yolo`, the agents are set to Yolo permissions as well --
+except pi, which has no permission mode in Orca: for it, the permission is
+left as it was.
 
 ## How it works
 

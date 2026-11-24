@@ -14,7 +14,8 @@ import { join } from "node:path";
 import { containerPath, hostPath } from "../src/lib/hostpath.ts";
 import { assetNames } from "../src/lib/app.ts";
 import { windowsAssetNames } from "../src/lib/windowsapp.ts";
-import { isWindows, programAsset, programName } from "../src/lib/platform.ts";
+import { configHome, dataHome, isWindows, programAsset, programName } from "../src/lib/platform.ts";
+import { paths } from "../src/lib/paths.ts";
 import { podmanSupported } from "../src/lib/engine.ts";
 import { invokeName } from "../src/lib/invoke.ts";
 
@@ -195,6 +196,29 @@ describe("the commands", () => {
     const roaming = process.env.APPDATA ?? "";
     expect(typeof local).toBe("string");
     expect(typeof roaming).toBe("string");
+
+    const savedLocal = process.env.LOCALAPPDATA;
+    const savedRoaming = process.env.APPDATA;
+    process.env.LOCALAPPDATA = join(tmpdir(), "orca-box-local");
+    process.env.APPDATA = join(tmpdir(), "orca-box-roaming");
+    try {
+      // The program's own folder is %LOCALAPPDATA%\orca-box, with the
+      // commands beside it in a bin folder -- the same folder the
+      // program itself is in, not a folder inside it.
+      expect(dataHome()).toBe(process.env.LOCALAPPDATA);
+      const p = paths();
+      expect(p.data).toBe(join(process.env.LOCALAPPDATA, "orca-box"));
+      expect(p.program).toBe(join(process.env.LOCALAPPDATA, "orca-box", "orca-box.exe"));
+      expect(p.bin).toBe(join(process.env.LOCALAPPDATA, "orca-box", "bin"));
+      // The settings are in the roaming folder, so they follow the user
+      // between machines.
+      expect(configHome()).toBe(process.env.APPDATA);
+    } finally {
+      if (savedLocal === undefined) delete process.env.LOCALAPPDATA;
+      else process.env.LOCALAPPDATA = savedLocal;
+      if (savedRoaming === undefined) delete process.env.APPDATA;
+      else process.env.APPDATA = savedRoaming;
+    }
   });
 
   test("Podman is not offered on Windows", () => {

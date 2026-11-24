@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { configHome, isMac, isWindows } from "./platform.ts";
+import { warn } from "./output.ts";
 
 const AGENTS = ["claude", "codex", "pi"] as const;
 type Agent = (typeof AGENTS)[number];
@@ -303,9 +304,7 @@ async function mutate(params: Record<string, unknown>): Promise<void> {
   const frame = await call("settings.mutateAgentLaunch", params);
   if (!frame.ok) {
     const err = (frame.error ?? {}) as { message?: string };
-    throw new Error(
-      `Orca rejected ${JSON.stringify(params)}: ${err.message ?? err}`,
-    );
+    throw new Error(err.message ?? JSON.stringify(frame.error ?? {}));
   }
 }
 
@@ -313,13 +312,53 @@ async function mutate(params: Record<string, unknown>): Promise<void> {
  * Is this command one of ours?
  *
  * Our command in any form we've written: orca-box, ~/.local/bin/orca-box,
- * or a full path (including Bazzite's /var/home form).
+ * or the program itself (including Bazzite's /var/home form). The path
+ * may be quoted, because a path with a space in it has to be.
  */
-function isOurs(value: string, boxPath: string): boolean {
-  const first = value ? value.split(" ", 1)[0] : "";
+function isOurs(value: string, ...ours: string[]): boolean {
+  const first = firstWord(value);
   if (!first) return false;
   if (first === "orca-box") return true;
-  return realPath(first) === realPath(boxPath);
+  const path = unquote(first);
+  return ours.some((ours) => samePath(path, realPath(unquote(ours))));
+}
+
+/**
+ * The program in a command: its first word.
+ *
+ * A quoted path is one word, even when it has a space in it.
+ */
+function firstWord(command: string): string {
+  const trimmed = command.trim();
+  if (!trimmed) return "";
+  const quote = trimmed[0];
+  if (quote === "'" || quote === '"') {
+    const end = trimmed.indexOf(quote, 1);
+    if (end > 0) return trimmed.slice(0, end + 1);
+  }
+  const space = trimmed.search(/\s/);
+  return space < 0 ? trimmed : trimmed.slice(0, space);
+}
+
+/** Take the quotes off a path, if it has any. */
+function unquote(path: string): string {
+  const first = path[0];
+  if ((first === "'" || first === '"') && path.length > 1 && path.endsWith(first)) {
+    return path.slice(1, -1);
+  }
+  return path;
+}
+
+/**
+ * Are these the same path?
+ *
+ * Windows paths are not case-sensitive: C:\Users\me and c:\users\me are
+ * the same folder, so the same program.
+ */
+function samePath(left: string, right: string): boolean {
+  if (left === right) return true;
+  if (isWindows()) return left.toLowerCase() === right.toLowerCase();
+  return false;
 }
 
 /** Resolve a path, without requiring it to exist. */
@@ -350,6 +389,17 @@ export interface ConfigureOptions {
 export async function configure(options: ConfigureOptions): Promise<boolean> {
   const { action, yolo, boxPath, savedPath, prefix } = options;
 
+  // On Windows the command is the program's own path, and the shells
+  // there read a path with a space in it as two words. Say so, rather
+  // than let the agent fail to start.
+  if (isWindows() && /\s/.test(prefix)) {
+    warn(
+      `the program's path has a space in it (${prefix}), and the shell in\n` +
+        "    Orca's terminal may not be able to start it. Moving the program\n" +
+        "    to a path without spaces is the fix.",
+    );
+  }
+
   // What the agents had before we took over.
   let saved: SavedCommands = {};
   if (existsSync(savedPath)) {
@@ -369,7 +419,7 @@ export async function configure(options: ConfigureOptions): Promise<boolean> {
   if (action === "set" && before !== null) {
     for (const agent of AGENTS) {
       const old = before[agent] ?? "";
-      if (!isOurs(old, boxPath)) {
+      if (!isOurs(old, boxPath, prefix)) {
         saved[agent] = old;
       }
     }
@@ -384,14 +434,24 @@ export async function configure(options: ConfigureOptions): Promise<boolean> {
       await mutate({ type: "command", agent, value: next });
       process.stdout.write(`  ${agent.padEnd(7)} command: ${old || "(default)"} -> ${next}\n`);
       if (yolo) {
-        await mutate({ type: "permissions", mode: "yolo", agent });
-        process.stdout.write(`  ${agent.padEnd(7)} permissions: Yolo\n`);
+        // Not every agent has a permission mode in Orca (pi has none),
+        // and Orca refuses the change for those. The command is set
+        // either way, so a refusal here is not a failure of the whole
+        // change: it is said, and the other agents are done.
+        try {
+          await mutate({ type: "permissions", mode: "yolo", agent });
+          process.stdout.write(`  ${agent.padEnd(7)} permissions: Yolo\n`);
+        } catch (err) {
+          process.stdout.write(
+            `  ${agent.padEnd(7)} permissions: left as they were (${(err as Error).message})\n`,
+          );
+        }
       }
     } else {
       if (before === null) {
         process.stdout.write(`  ${agent.padEnd(7)} skipped (couldn't read current setting)\n`);
         failed = true;
-      } else if (isOurs(old, boxPath)) {
+      } else if (isOurs(old, boxPath, prefix)) {
         const previous = typeof saved[agent] === "string" ? saved[agent] : "";
         await mutate({ type: "command", agent, value: previous });
         process.stdout.write(

@@ -18,7 +18,7 @@ import { releaseInfo } from "../src/lib/release.ts";
 import { invokeName, invokeNameFrom, psCmdlineName } from "../src/lib/invoke.ts";
 import { hasCommand, findCommand } from "../src/lib/which.ts";
 import { findGh, ghSettingsHosts } from "../src/lib/gh.ts";
-import { hasSubidRange } from "../src/lib/setup.ts";
+import { hasSubidRange, orcaCommandPrefix, quoteCommandPath } from "../src/lib/setup.ts";
 import { BoxLock } from "../src/lib/box.ts";
 import { macAssetNames } from "../src/lib/macapp.ts";
 import { isMac, isWindows, programAsset, programAssetUrl } from "../src/lib/platform.ts";
@@ -721,12 +721,21 @@ describe("the command line", () => {
 });
 
 describe("talking to Orca", () => {
-  // Windows has no unix sockets: Orca publishes a named pipe there, and
-  // the mock daemon cannot make one.
-  test.skipIf(isWindows())("it points the agents at orca-box, and puts them back", async () => {
-    // Start the mock Orca daemon.
-    const dataDir = join(work, "orca-data");
-    const sock = join(work, "orca.sock");
+  /** Start the mock Orca daemon, and hand its socket to the caller. */
+  async function withMockOrca(
+    name: string,
+    run: (
+      run: (args: string[]) => ReturnType<typeof Bun.spawnSync>,
+    ) => Promise<void>,
+    env: Record<string, string> = {},
+  ): Promise<void> {
+    // Windows has no unix sockets: Orca publishes a named pipe there, and
+    // the mock daemon cannot make one.
+    if (isWindows()) return;
+    // Its own socket and data folder per test: the daemon of the last
+    // test may still be holding the old one.
+    const dataDir = join(work, `orca-data-${name}`);
+    const sock = join(work, `orca-${name}.sock`);
     const daemon = Bun.spawn(
       [process.execPath, join(import.meta.dir, "mocks", "orca-daemon.ts"), dataDir, sock],
       { stdout: "ignore", stderr: "ignore" },
@@ -738,9 +747,7 @@ describe("talking to Orca", () => {
       }
       expect(existsSync(sock)).toBe(true);
 
-      // Run the real command against it, twice: set, then unset.
-      const saved = join(work, "saved.json");
-      const run = (args: string[]) =>
+      await run((args: string[]) =>
         Bun.spawnSync(
           [
             process.execPath,
@@ -754,12 +761,20 @@ describe("talking to Orca", () => {
               HOME: home,
               ORCA_USER_DATA_PATH: dataDir,
               XDG_CONFIG_HOME: join(work, "config"),
+              ...env,
             },
             stdout: "pipe",
             stderr: "pipe",
           },
-        );
+        ),
+      );
+    } finally {
+      daemon.kill();
+    }
+  }
 
+  test("it points the agents at orca-box, and puts them back", async () => {
+    await withMockOrca("set", async (run) => {
       const set = run([]);
       const setOut = new TextDecoder().decode(set.stdout);
       expect(setOut).toContain("orca-box claude");
@@ -770,9 +785,70 @@ describe("talking to Orca", () => {
       const unset = run(["--unset"]);
       const unsetOut = new TextDecoder().decode(unset.stdout);
       expect(unsetOut).toContain("codex --yolo");
-    } finally {
-      daemon.kill();
-    }
+    });
+  });
+
+  test("yolo is set where Orca has a permission mode for the agent", async () => {
+    await withMockOrca("yolo", async (run) => {
+      const set = run(["--yolo"]);
+      const setOut = new TextDecoder().decode(set.stdout);
+      expect(setOut).toContain("claude  permissions: Yolo");
+      expect(setOut).toContain("codex   permissions: Yolo");
+      // Orca has no permission mode for pi, and refuses the change. That
+      // is said, and it does not stop the other agents, or the command
+      // for pi itself, from being set.
+      expect(setOut).toContain("pi      permissions: left as they were");
+      expect(setOut).toContain("orca-box pi");
+      // The whole change is still a success.
+      expect(set.exitCode).toBe(0);
+    });
+  });
+
+  test("a path with a space in it is quoted, and is still ours", async () => {
+    // Orca runs the command through a shell, so a path with a space in
+    // it has to be quoted -- or the shell sees two words.
+    const prefix = join(home, "my programs");
+    await withMockOrca(
+      "space",
+      async (run) => {
+        const set = run([]);
+        const setOut = new TextDecoder().decode(set.stdout);
+        expect(setOut).toContain(`'${join(prefix, "bin", "orca-box")}' claude`);
+
+        // The quoted path is recognized as ours, so --unset puts back
+        // what was there before.
+        const unset = run(["--unset"]);
+        const unsetOut = new TextDecoder().decode(unset.stdout);
+        expect(unsetOut).toContain("(default)");
+      },
+      { PREFIX: prefix },
+    );
+  });
+});
+
+describe("the command Orca is given", () => {
+  test("it is the bare name when the commands are in ~/.local/bin", () => {
+    expect(orcaCommandPrefix()).toBe("orca-box");
+  });
+
+  test("a path with a space in it is quoted", () => {
+    // Orca runs the command through a shell: without the quotes, the
+    // shell would read it as two words.
+    expect(quoteCommandPath("/home/me/my programs/orca-box")).toBe(
+      "'/home/me/my programs/orca-box'",
+    );
+  });
+
+  test("a path with a quote in it is quoted as well", () => {
+    expect(quoteCommandPath("/home/me/it's here/orca-box")).toBe(
+      "'/home/me/it'\\''s here/orca-box'",
+    );
+  });
+
+  test("a path without a space in it is left as it is", () => {
+    expect(quoteCommandPath("/home/me/bin/orca-box")).toBe(
+      "/home/me/bin/orca-box",
+    );
   });
 });
 
