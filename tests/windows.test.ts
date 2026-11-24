@@ -199,8 +199,14 @@ describe("the commands", () => {
 
     const savedLocal = process.env.LOCALAPPDATA;
     const savedRoaming = process.env.APPDATA;
+    const savedXdgConfig = process.env.XDG_CONFIG_HOME;
+    const savedXdgData = process.env.XDG_DATA_HOME;
     process.env.LOCALAPPDATA = join(tmpdir(), "orca-box-local");
     process.env.APPDATA = join(tmpdir(), "orca-box-roaming");
+    // The XDG variables win over the platform's own folders, so they
+    // have to be out of the way here: this is about what Windows does.
+    delete process.env.XDG_CONFIG_HOME;
+    delete process.env.XDG_DATA_HOME;
     try {
       // The program's own folder is %LOCALAPPDATA%\orca-box, with the
       // commands beside it in a bin folder -- the same folder the
@@ -218,6 +224,10 @@ describe("the commands", () => {
       else process.env.LOCALAPPDATA = savedLocal;
       if (savedRoaming === undefined) delete process.env.APPDATA;
       else process.env.APPDATA = savedRoaming;
+      if (savedXdgConfig === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = savedXdgConfig;
+      if (savedXdgData === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = savedXdgData;
     }
   });
 
