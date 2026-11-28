@@ -396,6 +396,28 @@ describe("running a box", () => {
     expect(log).not.toContain("PODMAN run -d");
   });
 
+  test("a box Podman reports as running is replaced if crun says it is stopped", () => {
+    const result = run(["orca-box", "pi", "--model", "test-model"], {
+      FAKE_EXEC_FAILURE: "stale",
+    });
+    const actions = result.log
+      .split("\n")
+      .filter((line) => /^PODMAN (rm -f|run -d|exec -i) /.test(line))
+      .map((line) => line.split(" ")[1]);
+    expect(actions).toEqual(["rm", "run", "exec"]);
+    expect(result.log).toContain(" pi --model test-model");
+    expect(result.code).toBe(0);
+  });
+
+  test("an unrelated Podman exec failure leaves the existing box in place", () => {
+    const { log, code } = run(["orca-box", "claude"], {
+      FAKE_EXEC_FAILURE: "permission",
+    });
+    expect(log).not.toContain("PODMAN rm -f");
+    expect(log).not.toContain("PODMAN run -d");
+    expect(code).toBe(125);
+  });
+
   test("the container drops all capabilities", () => {
     const result = run(["orca-box", "claude"], { FAKE_EXISTING: "0" });
     expect(engineLog(result)).toContain("--cap-drop=all");

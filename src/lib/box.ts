@@ -402,6 +402,22 @@ export function boxState(name: string): string {
   }
 }
 
+function canReuseBox(name: string, state: string): boolean {
+  if (!state.startsWith("true 2 ")) return false;
+  if (engineMode() !== "podman") return true;
+
+  // Podman can report a box as running when its OCI runtime has stopped it.
+  // Probe before starting the agent, so an agent's exit can never trigger a retry.
+  const probe = spawnProgram("podman", ["exec", name, "true"], {
+    stdout: "ignore",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  if (!probe || probe.exitCode === 0) return true;
+  const error = new TextDecoder().decode(probe.stderr);
+  return !/^Error: OCI runtime error: [^\r\n]*\bcontainer\b[^\r\n]*\bis not running\b/m.test(error);
+}
+
 /**
  * The version of orca-box that made a running box.
  *
@@ -847,47 +863,7 @@ export async function runAgent(args: string[]): Promise<void> {
     process.exit(await proc.exited);
   }
 
-  const lockDir = BoxLock.prepare();
-  const lock = new BoxLock(lockDir, name);
-  const lockTimeout = Number(process.env.ORCA_BOX_LOCK_TIMEOUT ?? 60);
-
-  let state = boxState(name);
-  let needCreate = false;
-
-  if (!state.startsWith("true 2 ")) {
-    // Not running: only one launch may create it.
-    const got = await lock.acquire(lockTimeout);
-    if (!got) {
-      // The other launch may have finished while we waited.
-      state = boxState(name);
-      if (!state.startsWith("true 2 ")) {
-        die(
-          `orca-box: timed out after ${lockTimeout}s waiting for another launch in this workspace.\n` +
-            `orca-box: what holds the lock: ${lockHolderHint(lock.file)}`,
-        );
-      }
-    } else {
-      try {
-        // Another launch may have made it while we waited.
-        state = boxState(name);
-        if (!state.startsWith("true 2 ")) {
-          if (state) {
-            spawnProgram(engineBinary(), ["rm", "-f", name], {
-              stdout: "ignore",
-              stderr: "ignore",
-              stdin: "ignore",
-            });
-          }
-          state = "";
-          needCreate = true;
-        }
-      } finally {
-        lock.release();
-      }
-    }
-  }
-
-  if (needCreate) {
+  const createBox = async (): Promise<void> => {
     const mounts = [
       "-v",
       `${target.worktree}:${containerPath(target.worktree)}${mountOpt("rw")}`,
@@ -940,9 +916,49 @@ export async function runAgent(args: string[]): Promise<void> {
     if ((await proc.exited) !== 0) {
       die("orca-box: could not create the box");
     }
+  };
+
+  const lockDir = BoxLock.prepare();
+  const lock = new BoxLock(lockDir, name);
+  const lockTimeout = Number(process.env.ORCA_BOX_LOCK_TIMEOUT ?? 60);
+
+  let state = boxState(name);
+  if (!canReuseBox(name, state)) {
+    const got = await lock.acquire(lockTimeout);
+    if (got) {
+      try {
+        // Another launch may have replaced the box while we waited.
+        state = boxState(name);
+        if (!canReuseBox(name, state)) {
+          if (state) {
+            if (state.startsWith("true 2 ")) {
+              warn("Podman's runtime stopped this workspace's box. Creating a new one.");
+            }
+            spawnProgram(engineBinary(), ["rm", "-f", name], {
+              stdout: "ignore",
+              stderr: "ignore",
+              stdin: "ignore",
+            });
+          }
+          await createBox();
+          state = "";
+        }
+      } finally {
+        lock.release();
+      }
+    } else {
+      // The other launch may have finished while we waited.
+      state = boxState(name);
+      if (!canReuseBox(name, state)) {
+        die(
+          `orca-box: timed out after ${lockTimeout}s waiting for another launch in this workspace.\n` +
+            `orca-box: what holds the lock: ${lockHolderHint(lock.file)}`,
+        );
+      }
+    }
   }
 
-  if (state && state !== "" && state !== `true 2 ${gitMode}`) {
+  if (state && state !== `true 2 ${gitMode}`) {
     // Agents may be running in it; don't pull the box out from under them.
     process.stderr.write(
       `orca-box: this workspace's box was started with ORCA_BOX_GIT=${state.slice(state.lastIndexOf(" ") + 1)}.\n`,

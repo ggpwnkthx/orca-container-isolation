@@ -7,6 +7,13 @@ and this project uses [semantic versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.23]
+
+### Fixed
+- Recreate the workspace container when Podman reports it as running but
+  crun reports that it has stopped. Concurrent agent launches share the
+  replacement container.
+
 ## [1.7.22]
 
 ### Fixed

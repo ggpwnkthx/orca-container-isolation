@@ -15,9 +15,11 @@
  *   FAKE_EXISTING   1 (default) if a box already exists, 0 if not
  *   FAKE_GIT        the git mode of the existing box (ro/rw)
  *   FAKE_GH         whether the existing box has the gh credentials (0/1)
+ *   FAKE_EXEC_FAILURE  "stale" for an OCI runtime that stopped the box,
+ *                      or "permission" for an unrelated engine failure
  */
 
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 
 const log = process.env.FAKE_LOG ?? "/tmp/fake-podman.log";
 try {
@@ -82,6 +84,20 @@ switch (args[0]) {
       console.log(gh);
     } else if (format.includes("Name")) {
       console.log("/name");
+    }
+    break;
+  }
+  case "exec": {
+    switch (process.env.FAKE_EXEC_FAILURE) {
+      case "stale":
+        if (!readFileSync(log, "utf8").includes("\nPODMAN run -d ")) {
+          console.error("Error: OCI runtime error: crun: the container `deadbeef` is not running");
+          process.exit(126);
+        }
+        break;
+      case "permission":
+        console.error("Error: permission denied");
+        process.exit(125);
     }
     break;
   }
